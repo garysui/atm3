@@ -1,0 +1,14 @@
+node_modules/
+dist/
+logs/
+*.log
+
+# local env and credentials
+.env
+.env.local
+
+# local data: DuckDB files and downloaded market data
+data/*
+!data/.gitkeep
+*.duckdb
+*.duckdb.wal
