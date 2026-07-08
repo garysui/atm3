@@ -1,0 +1,27 @@
+{
+  "name": "atm3",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "migrate": "tsx scripts/migrate.ts",
+    "lint": "eslint .",
+    "build": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "^1.5.3-r.1",
+    "dotenv": "^17.4.2",
+    "pino": "^10.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.3",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0",
+    "tsx": "^4.22.3",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2"
+  }
+}

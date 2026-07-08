@@ -9,10 +9,12 @@ data. Strategies/backtesting come only after the data foundation works.
 - [x] git repo, README, AGENTS.md
 - [x] [tech-stack.md](tech-stack.md) — stack decisions + deviations from atm2
 - [x] [data-model.md](data-model.md) — layers + ERDs
-- [ ] Owner sign-off on deviations D1–D6 and the ERDs
-- [ ] GitHub remote `garysui/atm3` (owner decides public/private)
+- [x] Owner sign-off on deviations D1–D6 and the ERDs
+- [x] GitHub remote `garysui/atm3` (owner decides public/private)
 
 ## M1 — Skeleton
+
+Status: done 2026-07-08.
 
 Scaffold package.json/tsconfig/eslint from atm2's shape; migration runner;
 DuckDB open helper; `0001_init.sql` creating `raw`/`facts`/`computed`/`ops`
