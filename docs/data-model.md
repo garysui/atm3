@@ -170,6 +170,22 @@ Operational notes, verified 2026-07-08:
   `delisted_utc` (ISDR→ACCS pattern). The identity builder ends such usages
   at the row's `last_updated_utc` date, so old tickers never stay open-ended
   and current lookups never leak into prior users.
+- Vendors state one corporate action under BOTH tickers around a rename
+  (MULN/BINI 2025-06-02 split). The factor computation collapses duplicate
+  same-day statements to one factor — never a product of statements.
+- Vendors publish actions before they execute (SOXS 10:1 with a future ex
+  date) and after an instrument stops trading (FOXO 3000:1 after going
+  dark). An adjustment event applies only where the series has bars after
+  it: each series anchors to its own latest tape. A post-final-bar action is
+  a uniform factor across the whole series — zero effect on returns.
+- Ticker case is significant in vendor notation (`INNpF` is a preferred;
+  `INNPF` is a different OTC security). Symbols are never case-folded,
+  anywhere.
+- Polygon dividend rows ship a CUMULATIVE `historical_adjustment_factor`;
+  it is never ingested. Per-event factors come from cash amounts and our own
+  raw closes, with same-day distinct distributions summed first.
+- Cached adjusted-bar policies are `split` and `split_dividend`; policy
+  `none` IS `facts.bars_daily` and is never duplicated.
 
 `ops.meta` stores the `schema_version` stamp: `db/schema.sql` is declarative
 and applied at every open, and a version mismatch means "delete the database

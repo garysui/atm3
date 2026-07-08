@@ -326,7 +326,9 @@ export async function ingestTickerEvents(
   const results: Array<{ ticker: string; rows: number; skipped: boolean }> = []
 
   for (const ticker of options.tickers) {
-    const normalized = ticker.trim().toUpperCase()
+    // Ticker case is significant in Polygon notation (INNpF = preferred,
+    // INNPF = a different OTC security) — never case-fold.
+    const normalized = ticker.trim()
     const relativeFilePath = `raw/polygon/ticker_events/snapshot_date=${snapshotDate}/${normalized}.json.gz`
 
     if (

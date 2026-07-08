@@ -75,6 +75,9 @@ writer or concurrent readers, so stop long-running jobs before querying.
 
 ## Status
 
-Specs (M0) and skeleton (M1) are done; raw Polygon ingestion (M2) is next.
-Strategies/backtesting come after the data foundation works. See
+M0–M4 done: specs, skeleton, raw Polygon ingestion (2-year backfill), facts
+builders (identity, calendar, corporate actions, bars), and the computed layer
+(adjustment factors + policy-adjusted bars, 100% split-parity with the vendor
+on active instruments). Next: M5 minimal API/UI surface.
+Strategies/backtesting come after. See
 [docs/bootstrap-plan.md](docs/bootstrap-plan.md).

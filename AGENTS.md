@@ -75,6 +75,8 @@ Additional rules carried from atm2:
 - A ticker symbol is a time-ranged lookup handle, not an identity. Resolve
   `(market_scope, symbol, date)` to an `instrument_id`, then key everything by
   `instrument_id`.
+- Ticker case is significant in vendor notation (`INNpF` preferred vs `INNPF`
+  OTC are different securities). Never case-fold symbols.
 - All jobs are idempotent: upserts/conflict keys, resume from the last good
   point with small overlap, no duplicates on re-run.
 - Store timestamps in UTC (`timestamptz`). `market_date` is the exchange-local

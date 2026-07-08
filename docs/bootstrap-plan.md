@@ -78,6 +78,8 @@ dividend payers (mutual funds, CUSIP rows), never guessed.
 
 ## M4 — Computed layer
 
+Status: done 2026-07-08.
+
 `core/` computations: adjustment factors from corporate actions; adjusted daily
 bars per policy (`none`/`split`/`split_dividend`) as pure functions with
 optional cache into `computed.*`; invalidation via `computed.build_state`
@@ -86,6 +88,18 @@ watermarks.
 Done when: our `split` policy matches Polygon `adjusted=true` within epsilon
 across a sample set (parity check against vendor-adjusted aggregates); dropping
 all `computed.*` tables and rebuilding yields identical results.
+
+Evidence: 1,600 split + 74,943 dividend factors; 5,655,488 adjusted bars per
+cached policy; `npm run verify:adjustments` shows **100.000% close parity on
+all 5,057,071 active-instrument bars** (tolerance max($0.01, 0.05%)), with
+divergence only on delisted names where vendors apply post-final-bar
+consolidations (uniform factor, zero return impact) and on renamed
+instruments excluded from the vendor's per-ticker frame (419). Freshness
+watermarks skip clean rebuilds; drop-and-rebuild reproduces identical rows.
+Getting to 100% surfaced three vendor-data traps, now encoded in the
+computation and data-model notes: duplicate action statements around renames,
+future-dated/post-delisting actions (series anchor rule), and case-significant
+tickers.
 
 ## M5 — Minimal surface
 

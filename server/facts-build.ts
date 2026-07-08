@@ -258,7 +258,7 @@ export async function buildIdentity(
     await ctx.connection.run(`
       create or replace temp table t_ref as
       select
-        upper(r->>'$.ticker') as symbol,
+        r->>'$.ticker' as symbol,
         r->>'$.name' as name,
         r->>'$.type' as type_code,
         nullif(r->>'$.composite_figi', '') as composite_figi,
@@ -380,7 +380,7 @@ export async function buildIdentity(
         with events as (
           select distinct
             nullif(res->>'$.composite_figi', '') as composite_figi,
-            upper(e->>'$.ticker_change.ticker') as symbol,
+            e->>'$.ticker_change.ticker' as symbol,
             cast(e->>'$.date' as date) as event_date
           from (
             select
@@ -580,7 +580,7 @@ export async function buildCorporateActions(
         sql: `
           select distinct
             r->>'$.id' as source_action_id,
-            upper(r->>'$.ticker') as symbol,
+            r->>'$.ticker' as symbol,
             'split' as action_type,
             cast(r->>'$.execution_date' as date) as ex_date,
             cast(null as date) as declaration_date,
@@ -611,7 +611,7 @@ export async function buildCorporateActions(
         sql: `
           select distinct
             r->>'$.id' as source_action_id,
-            upper(r->>'$.ticker') as symbol,
+            r->>'$.ticker' as symbol,
             'cash_dividend' as action_type,
             cast(r->>'$.ex_dividend_date' as date) as ex_date,
             try_cast(r->>'$.declaration_date' as date) as declaration_date,
@@ -726,7 +726,7 @@ export async function buildBarsDaily(
     await ctx.connection.run(`
       create or replace temp table t_bars as
       select
-        upper(b->>'$.T') as symbol,
+        b->>'$.T' as symbol,
         cast(
           regexp_extract(filename, 'date=(\\d{4}-\\d{2}-\\d{2})', 1) as date
         ) as market_date,

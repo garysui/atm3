@@ -90,6 +90,20 @@ const activeTickers = {
       composite_figi: 'FIGNEWS0001',
       last_updated_utc: '2026-07-08T00:00:00Z',
     },
+    {
+      // Ticker case is significant: ACMpA (preferred) and ACMPA (a
+      // different OTC security, not in this universe) must never collapse.
+      ticker: 'ACMpA',
+      name: 'Acme Corp 5% Series A Preferred',
+      market: 'stocks',
+      locale: 'us',
+      primary_exchange: 'XNYS',
+      type: 'PFD',
+      active: true,
+      currency_name: 'usd',
+      composite_figi: 'FIGACMEPFD1',
+      last_updated_utc: '2026-07-08T00:00:00Z',
+    },
   ],
   status: 'OK',
 }
@@ -168,6 +182,7 @@ const groupedByDate: Record<string, unknown> = {
     results: [
       { T: 'ACME', o: 10.2, h: 11, l: 10.1, c: 10.9, v: 1200, vw: 10.6, t: 1736974800000, n: 6 },
       { T: 'ACMEW', o: 10.1, h: 10.9, l: 10, c: 10.8, v: 100, vw: 10.5, t: 1736974800000, n: 2 },
+      { T: 'ACMpA', o: 21.5, h: 21.7, l: 21.4, c: 21.6, v: 400, vw: 21.5, t: 1736974800000, n: 4 },
       { T: 'META', o: 605, h: 612, l: 604, c: 611, v: 8000, vw: 609, t: 1736974800000, n: 80 },
     ],
   },
@@ -178,6 +193,9 @@ const splits = {
   results: [
     { id: 'split-acme-1', ticker: 'ACME', execution_date: '2025-03-03', split_from: 1, split_to: 2 },
     { id: 'split-myst-1', ticker: 'MYST', execution_date: '2025-03-03', split_from: 1, split_to: 3 },
+    // Stated under the all-caps OTC ticker: must NOT resolve to the
+    // preferred ACMpA via case folding.
+    { id: 'split-otc-1', ticker: 'ACMPA', execution_date: '2025-03-03', split_from: 65, split_to: 1 },
   ],
   status: 'OK',
 }
@@ -333,7 +351,7 @@ test('facts builders: identity, chaining, bars, actions, calendar, determinism',
       await landFixture(db, dataDir)
 
       const summary = await buildAllFacts(db.connection, { dataDir })
-      assert.equal(summary.instruments, 4)
+      assert.equal(summary.instruments, 5)
       assert.equal(summary.exchanges, 2)
 
       const metaId = await instrumentIdFor(db, 'FIGMETA0001')
@@ -387,7 +405,15 @@ test('facts builders: identity, chaining, bars, actions, calendar, determinism',
         { symbol_as_traded: 'ACME', market_date: '2025-01-15' },
         { symbol_as_traded: 'ACMEW', market_date: '2025-01-15' },
       ])
-      assert.equal(summary.bars, 5) // OLDA+META, ACME+ACMEW+META
+      assert.equal(summary.bars, 6) // OLDA+META, ACME+ACMEW+ACMpA+META
+
+      // Case-significant tickers stay separate: the preferred keeps its bar,
+      // and the OTC-stated split must not contaminate it.
+      const preferredId = await instrumentIdFor(db, 'FIGACMEPFD1')
+      assert.deepEqual(await resolveSymbol(db, 'ACMpA', '2025-01-15'), [
+        preferredId,
+      ])
+      assert.deepEqual(await resolveSymbol(db, 'ACMPA', '2025-01-15'), [])
 
       // A rename without delisted_utc still ends the old usage: OLDN
       // resolves inside its window and nowhere after last_updated_utc.
@@ -417,8 +443,10 @@ test('facts builders: identity, chaining, bars, actions, calendar, determinism',
       ])
       const unresolvedActions = await db.connection.runAndReadAll(`
         select symbol from ops.unresolved where dataset = 'splits'
+        order by symbol
       `)
       assert.deepEqual(unresolvedActions.getRowObjectsJson(), [
+        { symbol: 'ACMPA' },
         { symbol: 'MYST' },
       ])
 
