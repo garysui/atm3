@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "db:init": "tsx scripts/init-db.ts",
+    "status": "tsx scripts/status.ts",
+    "sql": "tsx scripts/sql.ts",
     "raw:reindex": "tsx scripts/reindex-raw.ts",
     "facts:build": "tsx scripts/build-facts.ts",
     "ingest:polygon:reference-tickers": "tsx scripts/ingest-polygon-reference-tickers.ts",

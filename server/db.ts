@@ -25,6 +25,9 @@ export type Atm3Db = {
 export type OpenDatabaseOptions = {
   dbPath?: string
   schemaPath?: string
+  // Read-only opens never apply the schema and cannot write — used by
+  // inspection tools (npm run status / npm run sql).
+  readOnly?: boolean
 }
 
 export function resolveDbPath(dbPath?: string) {
@@ -35,16 +38,38 @@ export async function openDatabase(
   options: OpenDatabaseOptions = {},
 ): Promise<Atm3Db> {
   const dbPath = resolveDbPath(options.dbPath)
-  await mkdir(path.dirname(dbPath), { recursive: true })
 
-  const instance = await DuckDBInstance.create(dbPath)
+  if (!options.readOnly) {
+    await mkdir(path.dirname(dbPath), { recursive: true })
+  }
+
+  let instance: DuckDBInstance
+
+  try {
+    instance = options.readOnly
+      ? await DuckDBInstance.create(dbPath, { access_mode: 'READ_ONLY' })
+      : await DuckDBInstance.create(dbPath)
+  } catch (error) {
+    if (options.readOnly) {
+      throw new Error(
+        `Cannot open ${dbPath} read-only — does it exist? Run: npm run db:init`,
+        { cause: error },
+      )
+    }
+    throw error
+  }
+
   const connection = await instance.connect()
 
   try {
-    await applySchema(connection, {
-      schemaPath: options.schemaPath,
-      dbPath,
-    })
+    if (options.readOnly) {
+      await checkSchemaVersion(connection, dbPath)
+    } else {
+      await applySchema(connection, {
+        schemaPath: options.schemaPath,
+        dbPath,
+      })
+    }
 
     return {
       connection,
@@ -59,6 +84,35 @@ export async function openDatabase(
     connection.closeSync()
     instance.closeSync()
     throw error
+  }
+}
+
+async function checkSchemaVersion(
+  connection: DuckDBConnection,
+  dbPath: string,
+): Promise<void> {
+  let stored: number | null
+
+  try {
+    const result = await connection.runAndReadAll(
+      `select value from ops.meta where key = 'schema_version'`,
+    )
+    const row = result.getRowObjectsJson()[0]
+    stored = row === undefined ? null : Number(row.value)
+  } catch {
+    stored = null
+  }
+
+  if (stored === null) {
+    throw new Error(`${dbPath} is not initialized. Run: npm run db:init`)
+  }
+
+  if (stored !== SCHEMA_VERSION) {
+    throw new Error(
+      `${dbPath} has schema version ${stored}; this code expects ` +
+        `${SCHEMA_VERSION}. The database is a disposable index over the raw ` +
+        `zone: delete the file and rerun to rebuild it from data/raw/.`,
+    )
   }
 }
 

@@ -56,6 +56,23 @@ See [docs/tech-stack.md](docs/tech-stack.md) for decisions and rationale,
 [docs/data-model.md](docs/data-model.md) for the ERDs, and
 [docs/bootstrap-plan.md](docs/bootstrap-plan.md) for the build sequence.
 
+## Inspecting the data
+
+- `npm run status` — read-only overview: raw datasets, instruments by type,
+  symbols, bars, corporate actions, trading days, computed caches,
+  quarantine, recent runs.
+- `npm run sql -- "select ..."` — one-shot read-only SQL (single statement,
+  write verbs rejected). Raw payload files are queryable in place, e.g.
+  `npm run sql -- "from read_json('<data>/raw/polygon/splits/*/*.json.gz', columns={results:'JSON[]'})"`.
+- Raw zone is plain files: every payload sits next to a `.meta.json` manifest
+  under `<ATM3_DATA_DIR>/raw/<source>/<dataset>/...`, so `ls`/`gunzip -c`
+  work too.
+- Optional: the DuckDB CLI (`brew install duckdb`, then
+  `duckdb -readonly <ATM3_DATA_DIR>/atm3.duckdb`) for interactive SQL.
+
+Inspection tools open the database read-only; the DuckDB file allows one
+writer or concurrent readers, so stop long-running jobs before querying.
+
 ## Status
 
 Specs (M0) and skeleton (M1) are done; raw Polygon ingestion (M2) is next.
