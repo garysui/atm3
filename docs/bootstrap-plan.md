@@ -34,6 +34,8 @@ re-running it changes nothing. ✓
 
 ## M2 — Raw ingestion (Polygon)
 
+Status: done 2026-07-08 (initial 2-year backfill landed).
+
 Connector + one script per dataset, all idempotent and resumable via
 `ops.sync_state`, all landing verbatim payload files with `.meta.json`
 manifests plus `raw.fetches` index rows:
@@ -44,7 +46,8 @@ manifests plus `raw.fetches` index rows:
 4. `grouped_daily` backfill for a configurable window (`adjusted=false`),
    plus `adjusted=true` for parity checks
 5. `ticker_events` for symbols of interest
-6. `index_aggs` for a starter index list (entitlement permitting)
+6. ~~`index_aggs`~~ deferred — indices are not hooked up; SPY serves as the
+   market proxy (owner decision 2026-07-08)
 
 Done when: re-running any job fetches only what is missing and duplicates
 nothing; `raw.fetches` accounts for every file on disk; deleting the database
@@ -87,9 +90,16 @@ level.
   calendar, connector — same tables)
 - Research/strategy/backtest redesign, monitoring, IBKR paper trading
 
+## Resolved decisions (owner, 2026-07-08)
+
+1. Storage: all local data lives on the external drive —
+   `ATM3_DATA_DIR=/Volumes/atm-data/atm3/data` in `.env`. One variable moves
+   everything; the DuckDB path derives from it.
+2. Backfill window: 2 years (grouped daily bars, splits, dividends). Defaults
+   from = today − 2y, to = yesterday; `ATM3_BACKFILL_FROM/TO` override.
+3. Indices: not hooked up yet; SPY is the market proxy for now. `index_aggs`
+   ingestion deferred.
+
 ## Open questions for the owner
 
-1. Polygon entitlements (stocks + indices + flat files) — confirm indices
-   access before M2 item 6.
-2. Grouped-daily backfill window for M2 (e.g. 5 years? full history?).
-3. Any desire to bring CN/Tushare in earlier than "after M4"?
+1. Any desire to bring CN/Tushare in earlier than "after M4"?

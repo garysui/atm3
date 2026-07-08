@@ -150,10 +150,22 @@ erDiagram
 Raw payload files are not rows. Each payload file is written together with a
 `<file>.meta.json` manifest carrying its fetch provenance (url, params, http
 status, sha256, bytes, fetched_at, run id); `raw.fetches` is only an index
-over those manifests and can be rebuilt at any time by rescanning `data/raw/`.
-Per-dataset views (`raw.v_polygon_grouped_daily`,
+over those manifests and can be rebuilt at any time by rescanning `data/raw/`
+(`npm run raw:reindex`). Per-dataset views (`raw.v_polygon_grouped_daily`,
 `raw.v_polygon_reference_tickers`, …) parse the payload files in place via
 `read_json`/`read_csv`/`read_parquet`.
+
+Two operational notes, verified 2026-07-08:
+
+- Polygon aggregate rows carry both `T` (ticker) and `t` (timestamp), which
+  collide in DuckDB's case-insensitive JSON struct auto-detection. Raw views
+  must read `results` as `JSON[]` (`read_json(..., columns = {results:
+  'JSON[]'})`) and extract fields with case-sensitive JSON operators
+  (`bar->>'$.T'`).
+- `ops.sync_state` dies with the database file. The only cost is that a
+  completed snapshot sweep (reference tickers, splits, dividends) re-fetches
+  on its next same-day rerun; per-date datasets skip via the reindexed
+  `raw.fetches`.
 
 `ops.meta` stores the `schema_version` stamp: `db/schema.sql` is declarative
 and applied at every open, and a version mismatch means "delete the database
@@ -369,5 +381,5 @@ surfaced as a data-quality signal, not silently merged.
 | `market_holidays` | `/v1/marketstatus/upcoming` | trading_days |
 | `grouped_daily` | `/v2/aggs/grouped/.../{date}` `adjusted=false` | bars_daily (us_stocks) |
 | `grouped_daily_adjusted` | same, `adjusted=true` | parity checks only |
-| `index_aggs` | `/v2/aggs/ticker/I:*/range/1/day/...` | bars_daily (us_indices) |
+| `index_aggs` | `/v2/aggs/ticker/I:*/range/1/day/...` | deferred — SPY is the market proxy for now |
 | `earnings` | Benzinga via Polygon (later) | instrument_events |

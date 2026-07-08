@@ -46,8 +46,10 @@ vendor ingestion; atm2 is a design and behavior reference only.
 - TypeScript everywhere (no Python)
 - API: Node + Express
 - UI: React + Vite
-- Database/query engine: DuckDB (`@duckdb/node-api`), single file `data/atm3.duckdb`
-- Raw zone: verbatim vendor files under `data/raw/`, cataloged in DuckDB
+- Database/query engine: DuckDB (`@duckdb/node-api`), single file `<ATM3_DATA_DIR>/atm3.duckdb`
+- Raw zone: verbatim vendor files + `.meta.json` manifests under
+  `<ATM3_DATA_DIR>/raw/`, indexed (rebuildably) in DuckDB. On this machine
+  `ATM3_DATA_DIR` points at the external drive (`/Volumes/atm-data/atm3/data`)
 - Market data: Polygon.io first; connectors stay pluggable (Tushare, SEC, CBOE later)
 
 See [docs/tech-stack.md](docs/tech-stack.md) for decisions and rationale,

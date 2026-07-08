@@ -134,14 +134,21 @@ atm3/
 ## Environment variables
 
 ```
-ATM3_API_PORT=5180
-ATM3_API_HOST=127.0.0.1
-ATM3_DUCKDB_PATH=data/atm3.duckdb
-ATM3_DATA_DIR=data
+ATM3_DATA_DIR=/Volumes/atm-data/atm3/data   # all local data; DB + raw zone live inside
+ATM3_DUCKDB_PATH=...                        # optional; defaults to <ATM3_DATA_DIR>/atm3.duckdb
+ATM3_LOG_LEVEL=info
+ATM3_BACKFILL_FROM=...                      # optional; default = today - 2 years
+ATM3_BACKFILL_TO=...                        # optional; default = yesterday
 POLYGON_API_KEY=...
-SEC_USER_AGENT=atm3 local development <email>      # later
+ATM3_API_PORT=5180                          # later, API phase
+ATM3_API_HOST=127.0.0.1                     # later, API phase
+SEC_USER_AGENT=atm3 local development <email>         # later
 ATM3_POLYGON_FLATFILES_AWS_PROFILE=massive-flatfiles  # later, intraday flat files
 ```
+
+`ATM3_DATA_DIR` is the one knob that moves all local data. On this machine it
+points at the external drive (owner decision 2026-07-08: the internal disk is
+low on space); a fresh clone without `.env` defaults to `data/` in the repo.
 
 ## Considered and rejected
 

@@ -5,6 +5,14 @@
   "type": "module",
   "scripts": {
     "db:init": "tsx scripts/init-db.ts",
+    "raw:reindex": "tsx scripts/reindex-raw.ts",
+    "ingest:polygon:reference-tickers": "tsx scripts/ingest-polygon-reference-tickers.ts",
+    "ingest:polygon:exchanges": "tsx scripts/ingest-polygon-exchanges.ts",
+    "ingest:polygon:market-holidays": "tsx scripts/ingest-polygon-market-holidays.ts",
+    "ingest:polygon:splits": "tsx scripts/ingest-polygon-splits.ts",
+    "ingest:polygon:dividends": "tsx scripts/ingest-polygon-dividends.ts",
+    "ingest:polygon:grouped-daily": "tsx scripts/ingest-polygon-grouped-daily.ts",
+    "ingest:polygon:ticker-events": "tsx scripts/ingest-polygon-ticker-events.ts",
     "lint": "eslint .",
     "build": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"
