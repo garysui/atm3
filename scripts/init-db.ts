@@ -1,4 +1,4 @@
-import { openDatabase } from '../server/db.ts'
+import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 import { logger } from '../server/log.ts'
 
 const db = await openDatabase()
@@ -15,10 +15,10 @@ const tables = await db.connection.runAndReadAll(`
 logger.info(
   {
     dbPath: db.dbPath,
-    appliedNow: db.appliedMigrations,
+    schemaVersion: SCHEMA_VERSION,
     schemas: tables.getRowObjectsJson(),
   },
-  'database is migrated',
+  'database ready',
 )
 
 db.closeSync()

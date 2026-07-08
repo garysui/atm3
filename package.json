@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "migrate": "tsx scripts/migrate.ts",
+    "db:init": "tsx scripts/init-db.ts",
     "lint": "eslint .",
     "build": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"

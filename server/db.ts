@@ -1,26 +1,29 @@
-import { mkdir, readdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { env } from './env.ts'
-import { logger } from './log.ts'
 
-const defaultMigrationsDir = fileURLToPath(
-  new URL('../db/migrations', import.meta.url),
+// Bump when db/schema.sql changes in a way `create ... if not exists` cannot
+// express (column or key changes). The database file is a disposable index
+// over data/raw/ — on a version mismatch it is deleted and rebuilt, never
+// migrated.
+export const SCHEMA_VERSION = 1
+
+const defaultSchemaPath = fileURLToPath(
+  new URL('../db/schema.sql', import.meta.url),
 )
-const migrationFilePattern = /^\d{4}_[a-z0-9_]+\.sql$/
 
 export type Atm3Db = {
   connection: DuckDBConnection
   dbPath: string
   instance: DuckDBInstance
-  appliedMigrations: string[]
   closeSync(): void
 }
 
 export type OpenDatabaseOptions = {
   dbPath?: string
-  migrationsDir?: string
+  schemaPath?: string
 }
 
 export function resolveDbPath(dbPath?: string) {
@@ -37,16 +40,15 @@ export async function openDatabase(
   const connection = await instance.connect()
 
   try {
-    const appliedMigrations = await applyMigrations(
-      connection,
-      options.migrationsDir ?? defaultMigrationsDir,
-    )
+    await applySchema(connection, {
+      schemaPath: options.schemaPath,
+      dbPath,
+    })
 
     return {
       connection,
       dbPath,
       instance,
-      appliedMigrations,
       closeSync() {
         connection.closeSync()
         instance.closeSync()
@@ -59,64 +61,39 @@ export async function openDatabase(
   }
 }
 
-// Numbered run-once migrations. Each migration file runs inside a transaction
-// together with its ledger insert, so a crash mid-migration rolls back to the
-// pre-migration state. Never edit an applied migration; add a new one.
-export async function applyMigrations(
+// db/schema.sql is declarative and idempotent: running it at every open
+// brings a fresh or existing database to the current shape. It never alters
+// existing tables — the database holds nothing that data/raw/ cannot
+// reproduce, so incompatible schema changes rebuild the file instead of
+// migrating it.
+export async function applySchema(
   connection: DuckDBConnection,
-  migrationsDir = defaultMigrationsDir,
-): Promise<string[]> {
-  await connection.run('create schema if not exists ops')
-  await connection.run(`
-    create table if not exists ops.schema_migrations (
-      migration_id varchar primary key,
-      applied_at timestamptz not null default now()
+  options: { schemaPath?: string; dbPath?: string } = {},
+): Promise<void> {
+  const sql = await readFile(options.schemaPath ?? defaultSchemaPath, 'utf8')
+  await connection.run(sql)
+
+  const versionResult = await connection.runAndReadAll(
+    `select value from ops.meta where key = 'schema_version'`,
+  )
+  const storedRow = versionResult.getRowObjectsJson()[0]
+
+  if (storedRow === undefined) {
+    await connection.run(
+      `insert into ops.meta (key, value) values ('schema_version', $value)`,
+      { value: String(SCHEMA_VERSION) },
     )
-  `)
-
-  const files = (await readdir(migrationsDir))
-    .filter((file) => migrationFilePattern.test(file))
-    .sort()
-  const appliedResult = await connection.runAndReadAll(
-    'select migration_id from ops.schema_migrations',
-  )
-  const applied = new Set(
-    appliedResult.getRowObjectsJson().map((row) => String(row.migration_id)),
-  )
-  const appliedNow: string[] = []
-
-  for (const file of files) {
-    const migrationId = file.replace(/\.sql$/, '')
-
-    if (applied.has(migrationId)) {
-      continue
-    }
-
-    const sql = await readFile(path.join(migrationsDir, file), 'utf8')
-    await connection.run('begin transaction')
-
-    try {
-      await connection.run(sql)
-      await connection.run(
-        'insert into ops.schema_migrations (migration_id) values ($migration_id)',
-        { migration_id: migrationId },
-      )
-      await connection.run('commit')
-    } catch (error) {
-      try {
-        await connection.run('rollback')
-      } catch {
-        // The failed statement may have already aborted the transaction.
-      }
-      throw new Error(
-        `Migration ${migrationId} failed: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      )
-    }
-
-    logger.info({ migrationId }, 'applied migration')
-    appliedNow.push(migrationId)
+    return
   }
 
-  return appliedNow
+  const storedVersion = Number(storedRow.value)
+
+  if (storedVersion !== SCHEMA_VERSION) {
+    throw new Error(
+      `${options.dbPath ?? 'The database'} has schema version ${storedVersion}; ` +
+        `this code expects ${SCHEMA_VERSION}. The database is a disposable ` +
+        `index over the raw zone: delete the file and rerun to rebuild it ` +
+        `from data/raw/.`,
+    )
+  }
 }

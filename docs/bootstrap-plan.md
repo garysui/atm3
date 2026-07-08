@@ -1,8 +1,12 @@
 # atm3 Bootstrap Plan
 
-Status: proposed 2026-07-08. The owner's bootstrap sequence: (1) tech stack
+Status: M0–M1 done, M2 next. The owner's bootstrap sequence: (1) tech stack
 specs, (2) data modeling/ERDs, (3) raw data ingestion, (4) computation over raw
 data. Strategies/backtesting come only after the data foundation works.
+
+Non-goal: no data is migrated from atm2 or any prior system. atm2's databases
+and downloaded files are not sources of truth — every byte enters through raw
+vendor ingestion below.
 
 ## M0 — Repo + specs (this phase)
 
@@ -14,19 +18,25 @@ data. Strategies/backtesting come only after the data foundation works.
 
 ## M1 — Skeleton
 
-Status: done 2026-07-08.
+Status: done 2026-07-08. Reworked the same day: the initial run-once migration
+ledger was removed in favor of a declarative `db/schema.sql` plus a
+`SCHEMA_VERSION` stamp — the database is a disposable index over `data/raw/`,
+so incompatible schema changes delete and rebuild the file instead of
+migrating it.
 
-Scaffold package.json/tsconfig/eslint from atm2's shape; migration runner;
-DuckDB open helper; `0001_init.sql` creating `raw`/`facts`/`computed`/`ops`
-schemas and tables; pino logging; `ops.runs` wrapper for jobs.
+Scaffold package.json/tsconfig/eslint (copying atm2's proven stack shape);
+`db/schema.sql` creating the `raw`/`facts`/`computed`/`ops` schemas and
+tables, applied idempotently at every database open; pino logging; `ops.runs`
+wrapper for jobs.
 
-Done when: `npm test` green; running any script creates the DB and applies
-migrations idempotently.
+Done when: `npm test` green; `npm run db:init` creates the database and
+re-running it changes nothing. ✓
 
 ## M2 — Raw ingestion (Polygon)
 
 Connector + one script per dataset, all idempotent and resumable via
-`ops.sync_state`, all landing verbatim files + `raw.fetches` rows:
+`ops.sync_state`, all landing verbatim payload files with `.meta.json`
+manifests plus `raw.fetches` index rows:
 
 1. `reference_tickers` snapshot (active + inactive, paged)
 2. `exchanges`, `market_holidays`
@@ -37,8 +47,9 @@ Connector + one script per dataset, all idempotent and resumable via
 6. `index_aggs` for a starter index list (entitlement permitting)
 
 Done when: re-running any job fetches only what is missing and duplicates
-nothing; `raw.fetches` accounts for every file on disk; a wiped DB re-catalogs
-from disk or re-fetches cleanly.
+nothing; `raw.fetches` accounts for every file on disk; deleting the database
+file and re-indexing from the manifests reproduces `raw.fetches` without any
+network call.
 
 ## M3 — Facts builders
 
@@ -46,9 +57,9 @@ Deterministic builders (raw views → facts): exchanges/trading_days; identity
 (instruments + symbols + identifiers, deterministic ids); corporate_actions;
 bars_daily with symbol→instrument resolution and `ops.unresolved` quarantine.
 
-Done when: FB→META symbol history resolves correctly (atm2's canonical case);
-bars for META span the FB/META ticker change under one instrument_id; rebuild
-from raw reproduces identical ids and row counts.
+Done when: FB→META symbol history resolves correctly (the canonical
+ticker-reuse case); bars for META span the FB/META ticker change under one
+instrument_id; rebuild from raw reproduces identical ids and row counts.
 
 ## M4 — Computed layer
 
@@ -58,8 +69,8 @@ optional cache into `computed.*`; invalidation via `computed.build_state`
 watermarks.
 
 Done when: our `split` policy matches Polygon `adjusted=true` within epsilon
-across a sample set (port atm2's parity test); dropping all `computed.*` tables
-and rebuilding yields identical results.
+across a sample set (parity check against vendor-adjusted aggregates); dropping
+all `computed.*` tables and rebuilding yields identical results.
 
 ## M5 — Minimal surface
 
@@ -78,8 +89,7 @@ level.
 
 ## Open questions for the owner
 
-1. GitHub repo visibility: private like atm2, or public?
-2. Polygon entitlements assumed same as atm2 (stocks + indices + flat files) —
-   confirm indices access before M2 item 6.
-3. Grouped-daily backfill window for M2 (e.g. 5 years? full history?).
-4. Any desire to bring CN/Tushare in earlier than "after M4"?
+1. Polygon entitlements (stocks + indices + flat files) — confirm indices
+   access before M2 item 6.
+2. Grouped-daily backfill window for M2 (e.g. 5 years? full history?).
+3. Any desire to bring CN/Tushare in earlier than "after M4"?

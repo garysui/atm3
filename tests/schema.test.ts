@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { openDatabase } from '../server/db.ts'
+import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 
 const expectedTables = [
   'computed.adjustment_factors',
@@ -18,24 +18,22 @@ const expectedTables = [
   'facts.symbol_events',
   'facts.symbols',
   'facts.trading_days',
+  'ops.meta',
   'ops.runs',
-  'ops.schema_migrations',
   'ops.sync_state',
   'ops.unresolved',
   'raw.fetches',
   'raw.sources',
 ]
 
-test('fresh database applies migrations and reopening is idempotent', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-migrations-'))
+test('fresh database gets the full schema and reopening is idempotent', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-schema-'))
   const dbPath = path.join(dir, 'atm3.duckdb')
 
   try {
     const first = await openDatabase({ dbPath })
 
     try {
-      assert.deepEqual(first.appliedMigrations, ['0001_init'])
-
       const tablesResult = await first.connection.runAndReadAll(`
         select table_schema || '.' || table_name as table_id
         from information_schema.tables
@@ -47,6 +45,14 @@ test('fresh database applies migrations and reopening is idempotent', async () =
         .getRowObjectsJson()
         .map((row) => String(row.table_id))
       assert.deepEqual(tableIds, expectedTables)
+
+      const versionResult = await first.connection.runAndReadAll(
+        `select value from ops.meta where key = 'schema_version'`,
+      )
+      assert.equal(
+        Number(versionResult.getRowObjectsJson()[0]?.value),
+        SCHEMA_VERSION,
+      )
 
       const sourcesResult = await first.connection.runAndReadAll(
         'select source_id from raw.sources order by source_id',
@@ -62,19 +68,18 @@ test('fresh database applies migrations and reopening is idempotent', async () =
     const second = await openDatabase({ dbPath })
 
     try {
-      assert.deepEqual(second.appliedMigrations, [])
-
-      const ledgerResult = await second.connection.runAndReadAll(
-        'select migration_id from ops.schema_migrations order by migration_id',
+      // Reopen re-runs the idempotent schema: still one version row, seeds
+      // not duplicated, tables usable.
+      const metaResult = await second.connection.runAndReadAll(
+        'select count(*) as meta_rows from ops.meta',
       )
-      assert.deepEqual(
-        ledgerResult
-          .getRowObjectsJson()
-          .map((row) => String(row.migration_id)),
-        ['0001_init'],
-      )
+      assert.equal(Number(metaResult.getRowObjectsJson()[0]?.meta_rows), 1)
 
-      // Tables stay usable after reopen: write and read back one instrument.
+      const sourcesResult = await second.connection.runAndReadAll(
+        'select count(*) as source_rows from raw.sources',
+      )
+      assert.equal(Number(sourcesResult.getRowObjectsJson()[0]?.source_rows), 5)
+
       await second.connection.run(
         `
           insert into facts.instruments (
@@ -103,43 +108,25 @@ test('fresh database applies migrations and reopening is idempotent', async () =
   }
 })
 
-test('a failing migration rolls back and leaves no ledger row', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-migrations-bad-'))
+test('a database from a different schema version refuses to open', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-schema-version-'))
   const dbPath = path.join(dir, 'atm3.duckdb')
-  const migrationsDir = path.join(dir, 'migrations')
-
-  const emptyMigrationsDir = path.join(dir, 'empty-migrations')
 
   try {
-    await mkdir(migrationsDir, { recursive: true })
-    await mkdir(emptyMigrationsDir, { recursive: true })
-    await writeFile(
-      path.join(migrationsDir, '0001_bad.sql'),
-      'create table ops.will_roll_back (id integer); select * from missing_table;',
-    )
-
-    await assert.rejects(
-      openDatabase({ dbPath, migrationsDir }),
-      /Migration 0001_bad failed/,
-    )
-
-    const db = await openDatabase({ dbPath, migrationsDir: emptyMigrationsDir })
+    const db = await openDatabase({ dbPath })
 
     try {
-      const ledgerResult = await db.connection.runAndReadAll(
-        'select migration_id from ops.schema_migrations',
+      await db.connection.run(
+        `update ops.meta set value = '999' where key = 'schema_version'`,
       )
-      assert.deepEqual(ledgerResult.getRowObjectsJson(), [])
-
-      const tablesResult = await db.connection.runAndReadAll(`
-        select count(*) as table_count
-        from information_schema.tables
-        where table_schema = 'ops' and table_name = 'will_roll_back'
-      `)
-      assert.equal(Number(tablesResult.getRowObjectsJson()[0]?.table_count), 0)
     } finally {
       db.closeSync()
     }
+
+    await assert.rejects(
+      openDatabase({ dbPath }),
+      /schema version 999.*expects 1.*disposable/s,
+    )
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

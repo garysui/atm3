@@ -1,7 +1,9 @@
 # atm3 Tech Stack
 
-Status: proposed 2026-07-08. Baseline is "copy atm2"; deviations are listed
-explicitly with rationale and need owner sign-off.
+Status: approved 2026-07-08 (D3 reworked the same day to the
+disposable-database model). Baseline is "copy atm2's stack"; deviations are
+listed explicitly with rationale. atm2 is a design reference only — see D3 and
+"Considered and rejected": no data is ever migrated from it.
 
 ## Decisions
 
@@ -12,8 +14,8 @@ explicitly with rationale and need owner sign-off.
 | API | Express 5 | same | proven in atm2; no framework churn |
 | UI | React 19 + Vite | same | UI comes late in the bootstrap sequence |
 | Database / query engine | DuckDB via `@duckdb/node-api` | same engine | **one** file `data/atm3.duckdb` for all markets (D1) |
-| Raw storage | verbatim vendor files under `data/raw/` + DuckDB catalog | changed | D2 |
-| Schema management | numbered migrations `db/migrations/NNNN_*.sql` | changed | D3 |
+| Raw storage | verbatim vendor files + `.meta.json` manifests under `data/raw/` + DuckDB index | changed | D2 |
+| Schema management | declarative `db/schema.sql` + `SCHEMA_VERSION` stamp; DB file is disposable | changed | D3 |
 | DB layout | DuckDB schemas `raw`, `facts`, `computed`, `ops` | changed | D4 |
 | Market data client | `@polygon.io/client-js` | same | |
 | Validation | `zod` (API inputs and vendor payload parsing) | same | |
@@ -57,21 +59,36 @@ e.g. data/raw/polygon/grouped_daily/date=2026-07-07/us_stocks.json.gz
      data/raw/polygon/reference_tickers/snapshot_date=2026-07-08/page-0001.json.gz
 ```
 
-Each file gets a `raw.fetches` catalog row (url, params, hash, byte count,
-fetched_at, run id). DuckDB reads these files directly (`read_json`,
+Each payload file is written together with a `<file>.meta.json` manifest
+(request url, params, http status, sha256, byte count, fetched_at, run id).
+`raw.fetches` in DuckDB is only an index over those manifests — rebuildable at
+any time by rescanning `data/raw/` — so fetch provenance lives in the raw zone
+itself, not in the database. DuckDB reads payload files directly (`read_json`,
 `read_csv`, `read_parquet`) through per-dataset views, so "parsing" is a view,
 not a copy. Facts builders consume those views.
 
 Benefits: raw is literally untouched (auditable, re-parseable when a parser bug
-is found), the DB stays small, and backfills are file drops.
+is found), the DB stays small and fully disposable, and backfills are file
+drops.
 
-### D3 — Numbered migrations instead of one idempotent schema.sql
+### D3 — Declarative schema, disposable database
 
-atm2's `db/schema.sql` (1,165 lines, `create table if not exists`) could not
-express column changes; schema drift had to be handled ad hoc. atm3 uses
-`db/migrations/0001_init.sql`, `0002_*.sql`, … applied in order at startup by a
-tiny runner that records applied ids in `ops.schema_migrations`. No ORM, plain
-SQL.
+atm2's idempotent `schema.sql` became painful because its database held data
+that could not be regenerated — evolving a column required hand-written
+run-once migrations (atm2 eventually grew a migration ledger inside
+`server/schema.ts`). Migration machinery exists to protect precious
+in-database data.
+
+atm3 removes the cause instead of managing the symptom: truth lives in
+`data/raw/` files, and every DuckDB table is an index or cache derived from
+them, so the database file is disposable. The schema stays declarative —
+`db/schema.sql`, `create ... if not exists`, applied at every open. New tables
+are picked up automatically; changes that `if not exists` cannot express
+(column/key changes) bump `SCHEMA_VERSION` in `server/db.ts`, and a mismatched
+database file refuses to open with instructions to delete and rebuild it from
+raw (no network re-fetch needed). No migration ledger, no "never edit an
+applied migration" process rule, and the rebuild-from-raw guarantee stays
+exercised instead of theoretical.
 
 ### D4 — DuckDB schemas as data layers
 
@@ -105,7 +122,7 @@ atm3/
   server/          Express API, DuckDB access, job orchestration
   src/             React UI (later phase)
   scripts/         thin CLI entrypoints (ingest, build, verify)
-  db/migrations/   numbered SQL migrations
+  db/schema.sql    declarative schema, applied at every open
   tests/           node:test suites
   docs/            specs and decision records
   data/            local data (gitignored): atm3.duckdb, raw/, computed/
@@ -134,5 +151,12 @@ ATM3_POLYGON_FLATFILES_AWS_PROFILE=massive-flatfiles  # later, intraday flat fil
   for a one-machine app; folder layering + lint rules give the same discipline.
 - **Postgres/Timescale** — DuckDB's columnar engine over local parquet/JSON is
   the right shape for single-user analytical scans; no server to babysit.
-- **An ORM or query builder** — plain SQL in migrations and computations;
+- **An ORM or query builder** — plain SQL in the schema and computations;
   DuckDB SQL *is* the compute engine.
+- **Numbered run-once migrations with a ledger** — machinery for protecting
+  in-database data that atm3 deliberately does not have; with a disposable
+  database it is dead weight (rejected after an initial implementation).
+- **Migrating data from atm2** — atm2's databases and downloaded files are not
+  sources of truth; its parsed rows and randomly-minted instrument ids would
+  smuggle the old data model into the new foundation. atm3 starts from
+  scratch; all data enters through raw vendor ingestion.

@@ -1,8 +1,11 @@
 # atm3 Data Model
 
-Status: proposed 2026-07-08, needs owner sign-off. Entity names below are
-`schema_table`; the prefix is the DuckDB schema (`raw`, `facts`, `computed`,
-`ops`).
+Status: approved 2026-07-08. Entity names below are `schema_table`; the
+prefix is the DuckDB schema (`raw`, `facts`, `computed`, `ops`).
+
+atm3 starts from scratch: no data is migrated from atm2 or any prior system.
+All data enters through raw vendor ingestion, and the database file is a
+disposable index over `data/raw/`.
 
 ## Layers
 
@@ -138,15 +141,23 @@ erDiagram
     timestamptz first_seen_at
     timestamptz last_seen_at
   }
-  ops_schema_migrations {
-    varchar migration_id PK
-    timestamptz applied_at
+  ops_meta {
+    varchar key PK "schema_version | ..."
+    varchar value
   }
 ```
 
-Raw payload files are not rows — `raw.fetches` catalogs them. Per-dataset views
-(`raw.v_polygon_grouped_daily`, `raw.v_polygon_reference_tickers`, …) parse the
-files in place via `read_json`/`read_csv`/`read_parquet`.
+Raw payload files are not rows. Each payload file is written together with a
+`<file>.meta.json` manifest carrying its fetch provenance (url, params, http
+status, sha256, bytes, fetched_at, run id); `raw.fetches` is only an index
+over those manifests and can be rebuilt at any time by rescanning `data/raw/`.
+Per-dataset views (`raw.v_polygon_grouped_daily`,
+`raw.v_polygon_reference_tickers`, …) parse the payload files in place via
+`read_json`/`read_csv`/`read_parquet`.
+
+`ops.meta` stores the `schema_version` stamp: `db/schema.sql` is declarative
+and applied at every open, and a version mismatch means "delete the database
+file and rebuild from raw" — there is no migration machinery.
 
 ## facts — identity and calendars
 
@@ -162,7 +173,7 @@ erDiagram
     uuid instrument_id PK "deterministic"
     varchar asset_class "equity | index | ..."
     varchar instrument_type "common_stock | etf | adr | preferred | warrant | unit | right | index | ..."
-    varchar security_form "atm2 concept carried over"
+    varchar security_form "derived classification for universe filtering"
     boolean is_clean_common_stock
     varchar name
     varchar primary_market_scope
@@ -332,14 +343,12 @@ Adjustment policies:
 
 - `none` — raw as traded.
 - `split` — back-adjusted for splits only.
-- `split_dividend` — back-adjusted for splits and cash dividends
-  (atm2's `split_dividend_back_adjusted`).
+- `split_dividend` — back-adjusted for splits and cash dividends.
 
 When a new corporate action arrives for an instrument, its cached computed rows
 are invalidated (watermark mismatch) and rebuilt. Later artifacts (technical
 metrics, universes, research stores) follow the same pattern and are specified
-when that phase starts — atm2's wide metric tables are explicitly **not**
-copied now.
+when that phase starts.
 
 ## Source precedence
 
@@ -347,24 +356,6 @@ copied now.
 facts about the same instrument-day. Computations select by an explicit
 precedence rule (default: `polygon` first) — disagreement between sources is
 surfaced as a data-quality signal, not silently merged.
-
-## Mapping from atm2
-
-| atm2 (`app.*`) | atm3 |
-|---|---|
-| per-market DB files | one DB; `market_scope` column |
-| `data_sources` | `raw.sources` |
-| `source_symbols` (parsed rows + raw_source JSON) | raw files + `raw.v_polygon_reference_tickers` view |
-| `instruments`, `symbols`, `instrument_identifiers`, `symbol_events` | `facts.*` same concepts, symbols scoped by `market_scope` |
-| `corporate_actions` | `facts.corporate_actions` (+ merger/spinoff/delisting types) |
-| `price_adjustment_events` | `computed.adjustment_factors` |
-| `instrument_events` | `facts.instrument_events` |
-| `ohlcv_bars` (raw rows in DB) | raw files + `facts.bars_daily` |
-| `normalized_ohlcv_bars`, `research_daily_bars` | `computed.bars_daily_adjusted` |
-| `market_trading_days` (global, per-market DB) | `facts.trading_days` keyed by `calendar_id` |
-| `market_data_files` | `raw.fetches` |
-| `ingestion_runs`, `event_ingestion_state`, `computation_state` | `ops.runs`, `ops.sync_state`, `computed.build_state` |
-| research/backtest/trading tables | out of scope; redesigned in a later phase |
 
 ## Initial Polygon dataset map
 

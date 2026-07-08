@@ -1,10 +1,13 @@
--- 0001_init: layer schemas and initial tables (docs/data-model.md).
+-- Declarative schema (docs/data-model.md), applied idempotently at every
+-- database open. The database file is a disposable index over data/raw/:
+-- it holds nothing that raw files cannot reproduce.
 --
--- Migration rules:
--- - Migrations are run-once, in filename order, each inside a transaction
---   together with its ops.schema_migrations ledger insert.
--- - Never edit an applied migration: databases that already ran it will not
---   pick up the change. Add a new numbered migration instead.
+-- Schema-change rules:
+-- - New tables/schemas: just add them here; `if not exists` picks them up.
+-- - Anything `if not exists` cannot express (column/key changes): edit the
+--   declaration AND bump SCHEMA_VERSION in server/db.ts. Existing database
+--   files then refuse to open and are deleted + rebuilt from data/raw.
+--   There is no migration machinery, on purpose.
 --
 -- Layers: raw (vendor truth catalog; payloads live on disk), facts (organized
 -- facts, rebuildable from raw), computed (caches of pure functions over
@@ -16,6 +19,11 @@ create schema if not exists computed;
 create schema if not exists ops;
 
 -- ops ------------------------------------------------------------------
+
+create table if not exists ops.meta (
+  key varchar primary key, -- schema_version | ...
+  value varchar not null
+);
 
 create table if not exists ops.runs (
   run_id uuid primary key,
@@ -59,8 +67,9 @@ create table if not exists raw.sources (
   base_url varchar
 );
 
--- Catalog of verbatim vendor payload files under data/raw/. The files are the
--- raw truth; these rows only account for them.
+-- Index of verbatim vendor payload files under data/raw/. The files (each
+-- with a .meta.json manifest) are the raw truth; this table is rebuildable
+-- by rescanning the raw zone.
 create table if not exists raw.fetches (
   fetch_id uuid primary key,
   run_id uuid,

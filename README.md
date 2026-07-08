@@ -18,6 +18,10 @@ design decisions aged badly:
    research caches all lived in one `app` schema and grew together. In atm3 the
    layers are physically explicit and lower layers never depend on higher ones.
 
+atm3 starts from scratch. No data is migrated from atm2 — its databases and
+downloaded files are not sources of truth. Every byte enters through raw
+vendor ingestion; atm2 is a design and behavior reference only.
+
 ## Core principles
 
 1. **Raw data is saved as-is.** Vendor responses land on disk verbatim
@@ -27,7 +31,9 @@ design decisions aged badly:
    history, corporate actions, bars, calendars) are deterministic computations
    over raw data. Derived data (adjusted bars, metrics) are pure functions of
    facts plus a point in time T. Persisting computed results is a performance
-   cache, never a source of truth — every computed table must be rebuildable.
+   cache, never a source of truth — every computed table must be rebuildable,
+   and the database file itself is disposable: it holds nothing that
+   `data/raw/` cannot reproduce.
 3. **One market universe.** All markets share one database and one identity
    space. `market_scope` is an attribute, filtering is a query.
 4. **A ticker is not an identity.** Symbols are time-ranged lookup handles that
@@ -50,6 +56,6 @@ See [docs/tech-stack.md](docs/tech-stack.md) for decisions and rationale,
 
 ## Status
 
-Bootstrapping. Docs first (tech stack, data model), then raw ingestion, then
-fact builders and computations. Strategies/backtesting come after the data
-foundation works.
+Specs (M0) and skeleton (M1) are done; raw Polygon ingestion (M2) is next.
+Strategies/backtesting come after the data foundation works. See
+[docs/bootstrap-plan.md](docs/bootstrap-plan.md).
