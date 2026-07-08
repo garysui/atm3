@@ -18,6 +18,18 @@ create schema if not exists facts;
 create schema if not exists computed;
 create schema if not exists ops;
 
+-- Deterministic ids (tech-stack D5): the same identity evidence always mints
+-- the same uuid, so a full rebuild from raw reproduces every id. MD5-derived,
+-- not RFC 4122 — determinism is the requirement, not registry compliance.
+create or replace macro deterministic_uuid(kind, key) as
+  cast(concat(
+    substr(md5(concat('atm3:', kind, ':', key)), 1, 8), '-',
+    substr(md5(concat('atm3:', kind, ':', key)), 9, 4), '-',
+    substr(md5(concat('atm3:', kind, ':', key)), 13, 4), '-',
+    substr(md5(concat('atm3:', kind, ':', key)), 17, 4), '-',
+    substr(md5(concat('atm3:', kind, ':', key)), 21, 12)
+  ) as uuid);
+
 -- ops ------------------------------------------------------------------
 
 create table if not exists ops.meta (
@@ -200,6 +212,9 @@ create table if not exists facts.instrument_events (
 
 -- Unadjusted, as traded, under the ticker of the day, linked to the
 -- instrument. Vendor-adjusted bars are never stored here.
+-- symbol_as_traded is part of the key because one instrument can trade as
+-- two concurrent tape lines on the same day (e.g. when-issued tickers like
+-- AAP/AAPW); the computed layer picks the primary line per instrument-day.
 create table if not exists facts.bars_daily (
   source_id varchar not null,
   instrument_id uuid not null,
@@ -213,7 +228,7 @@ create table if not exists facts.bars_daily (
   volume double,
   vwap double,
   trade_count bigint,
-  primary key (source_id, instrument_id, market_date)
+  primary key (source_id, instrument_id, market_date, symbol_as_traded)
 );
 
 -- computed ---------------------------------------------------------------

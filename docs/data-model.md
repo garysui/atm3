@@ -155,7 +155,7 @@ over those manifests and can be rebuilt at any time by rescanning `data/raw/`
 `raw.v_polygon_reference_tickers`, …) parse the payload files in place via
 `read_json`/`read_csv`/`read_parquet`.
 
-Two operational notes, verified 2026-07-08:
+Operational notes, verified 2026-07-08:
 
 - Polygon aggregate rows carry both `T` (ticker) and `t` (timestamp), which
   collide in DuckDB's case-insensitive JSON struct auto-detection. Raw views
@@ -166,6 +166,10 @@ Two operational notes, verified 2026-07-08:
   completed snapshot sweep (reference tickers, splits, dividends) re-fetches
   on its next same-day rerun; per-date datasets skip via the reindexed
   `raw.fetches`.
+- Ticker renames often leave the old reference row inactive **without**
+  `delisted_utc` (ISDR→ACCS pattern). The identity builder ends such usages
+  at the row's `last_updated_utc` date, so old tickers never stay open-ended
+  and current lookups never leak into prior users.
 
 `ops.meta` stores the `schema_version` stamp: `db/schema.sql` is declarative
 and applied at every open, and a version mismatch means "delete the database
@@ -287,8 +291,8 @@ erDiagram
     varchar source_id PK
     uuid instrument_id PK
     date market_date PK
+    varchar symbol_as_traded PK "e.g. FB before 2022-06-09"
     varchar market_scope
-    varchar symbol_as_traded "e.g. FB before 2022-06-09"
     double open
     double high
     double low
@@ -300,10 +304,15 @@ erDiagram
 ```
 
 Bars are stored **unadjusted, as traded, under the ticker of the day**, linked
-to the instrument. Vendor-adjusted bars are never facts; when ingested (e.g.
+to the instrument. `symbol_as_traded` is part of the key because one
+instrument can trade as two concurrent tape lines on the same day (e.g.
+when-issued tickers like AAP/AAPW); the computed layer picks the primary line
+per instrument-day. Vendor-adjusted bars are never facts; when ingested (e.g.
 Polygon `adjusted=true`) they are used only as parity checks for our own
 adjustment computation. Rows that cannot be resolved to an instrument go to
-`ops.unresolved` — never guessed, never dropped silently.
+`ops.unresolved` — never guessed, never dropped silently (in practice the
+quarantine catches exchange test tickers like ZTEST/NTEST.* and
+out-of-universe dividend payers like mutual funds).
 
 Intraday bars (minute) come in a later milestone: same identity rules, stored
 as partitioned parquet under `data/` with a DuckDB view, not as DB rows.

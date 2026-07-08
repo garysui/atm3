@@ -125,7 +125,7 @@ test('a database from a different schema version refuses to open', async () => {
 
     await assert.rejects(
       openDatabase({ dbPath }),
-      /schema version 999.*expects 1.*disposable/s,
+      new RegExp(`schema version 999.*expects ${SCHEMA_VERSION}.*disposable`, 's'),
     )
   } finally {
     await rm(dir, { recursive: true, force: true })

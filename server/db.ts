@@ -8,7 +8,8 @@ import { env } from './env.ts'
 // express (column or key changes). The database file is a disposable index
 // over data/raw/ — on a version mismatch it is deleted and rebuilt, never
 // migrated.
-export const SCHEMA_VERSION = 1
+// v2: facts.bars_daily key gained symbol_as_traded (concurrent tape lines).
+export const SCHEMA_VERSION = 2
 
 const defaultSchemaPath = fileURLToPath(
   new URL('../db/schema.sql', import.meta.url),

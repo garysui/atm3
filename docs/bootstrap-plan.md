@@ -56,6 +56,9 @@ network call.
 
 ## M3 — Facts builders
 
+Status: done 2026-07-08 (schema v2: the bars key gained `symbol_as_traded`
+for concurrent tape lines).
+
 Deterministic builders (raw views → facts): exchanges/trading_days; identity
 (instruments + symbols + identifiers, deterministic ids); corporate_actions;
 bars_daily with symbol→instrument resolution and `ops.unresolved` quarantine.
@@ -63,6 +66,15 @@ bars_daily with symbol→instrument resolution and `ops.unresolved` quarantine.
 Done when: FB→META symbol history resolves correctly (the canonical
 ticker-reuse case); bars for META span the FB/META ticker change under one
 instrument_id; rebuild from raw reproduces identical ids and row counts.
+
+Evidence (real 2-year data): FB resolves to Meta in [2012-05-18, 2022-06-09)
+and to the ProShares ETF after (exact dates from ticker events); DMAT→EART
+bars (413+88) span an in-window rename under one instrument (the bar window
+postdates FB→META, so a real in-window case stands in); two full rebuilds
+reproduced identical ids and counts — 34,959 instruments, 36,136 symbols,
+77,227 corporate actions, 534 trading days, 5,655,972 bars; the quarantine
+holds exchange test tickers (7,418 bar observations) and out-of-universe
+dividend payers (mutual funds, CUSIP rows), never guessed.
 
 ## M4 — Computed layer
 
