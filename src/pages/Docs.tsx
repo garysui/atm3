@@ -7,6 +7,27 @@ type DocEntry = { name: string; title: string }
 
 mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
 
+// In-doc relative markdown links must stay inside the SPA: `tech-stack.md`
+// becomes `#docs/tech-stack` (a path navigation would leave the app and 404
+// on refresh). External links open in a new tab.
+function rewriteDocLinks(container: HTMLElement): void {
+  for (const anchor of container.querySelectorAll('a[href]')) {
+    const href = anchor.getAttribute('href') ?? ''
+
+    if (/^(https?:)?\/\//.test(href)) {
+      anchor.setAttribute('target', '_blank')
+      anchor.setAttribute('rel', 'noreferrer')
+      continue
+    }
+
+    const match = href.match(/^(?:\.\/)?(?:docs\/)?([a-z0-9-]+)\.md(?:#.*)?$/i)
+
+    if (match) {
+      anchor.setAttribute('href', `#docs/${match[1]}`)
+    }
+  }
+}
+
 // marked leaves ```mermaid blocks as <pre><code class="language-mermaid">;
 // render each into an SVG in place. A diagram that fails to parse keeps its
 // code block with the error shown, never a blank hole.
@@ -199,6 +220,7 @@ export function Docs({ docName }: { docName: string | null }) {
     const article = articleRef.current
 
     if (article && html) {
+      rewriteDocLinks(article)
       void renderMermaidBlocks(article)
     }
   }, [html])
