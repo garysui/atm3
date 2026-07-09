@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   getJson,
   type BarsResponse,
   type InstrumentDetail,
   type Row,
 } from '../api.ts'
-import { BarsChart } from '../components/BarsChart.tsx'
+import { BarsChart, type ChartEvent } from '../components/BarsChart.tsx'
 import { DataTable } from '../components/DataTable.tsx'
 
 const policies = ['none', 'split', 'split_dividend'] as const
@@ -107,6 +107,30 @@ export function Instruments({
   const bars = barsKey && barsState?.key === barsKey ? barsState.data : null
   const instrument = detail?.instrument
 
+  // Corporate actions as chart markers: splits above the bar, dividends
+  // below, at their ex dates.
+  const chartEvents = useMemo<ChartEvent[]>(() => {
+    if (!detail) {
+      return []
+    }
+
+    return detail.corporateActions.map((action) =>
+      action.action_type === 'split'
+        ? {
+            date: String(action.ex_date),
+            kind: 'split' as const,
+            text: `S ${action.split_from}:${action.split_to}`,
+          }
+        : {
+            date: String(action.ex_date),
+            kind: 'dividend' as const,
+            text: `D ${action.cash_amount}`,
+          },
+    )
+  }, [detail])
+
+  const firstBarFactor = bars?.bars[0]?.cum_price_factor
+
   return (
     <div>
       <form onSubmit={search}>
@@ -172,6 +196,7 @@ export function Instruments({
               <input
                 type="date"
                 value={asOf}
+                max={detail ? String(detail.barsSummary.last_date) : undefined}
                 onChange={(event) => setAsOf(event.target.value)}
               />
             </label>
@@ -179,14 +204,17 @@ export function Instruments({
               <span className="muted">
                 {bars.bars.length} bars · policy {bars.policy}
                 {bars.asOf ? ` · as of ${bars.asOf}` : ''}
+                {firstBarFactor !== undefined &&
+                  ` · first-bar factor ×${Number(firstBarFactor).toFixed(6)}`}
               </span>
             )}
           </form>
-          {bars ? (
-            <BarsChart bars={bars.bars} />
-          ) : (
-            <p className="muted">loading bars…</p>
-          )}
+          <BarsChart
+            bars={bars?.bars ?? []}
+            events={chartEvents}
+            resetKey={`${instrumentId}|${asOf}`}
+          />
+          {!bars && <p className="muted">loading bars…</p>}
 
           {detail && (
             <div>
