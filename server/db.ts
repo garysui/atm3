@@ -9,7 +9,10 @@ import { env } from './env.ts'
 // over data/raw/ — on a version mismatch it is deleted and rebuilt, never
 // migrated.
 // v2: facts.bars_daily key gained symbol_as_traded (concurrent tape lines).
-export const SCHEMA_VERSION = 2
+// v3: computed layer became algorithm-first — adjusted bars are the
+//     computed.adjusted_bars(policy, as_of) table macro over facts; the only
+//     table is the optional bars_daily_adjusted_cache snapshot.
+export const SCHEMA_VERSION = 3
 
 const defaultSchemaPath = fileURLToPath(
   new URL('../db/schema.sql', import.meta.url),

@@ -333,28 +333,41 @@ out-of-universe dividend payers like mutual funds).
 Intraday bars (minute) come in a later milestone: same identity rules, stored
 as partitioned parquet under `data/` with a DuckDB view, not as DB rows.
 
-## computed — functions of facts + time T
+## computed — algorithms over facts
 
-The computed layer is primarily **code**: named, versioned pure functions in
-`core/`. Persisting outputs is opportunistic caching. Initial artifacts:
+The computed layer is **functions, not data**. Adjusted bars are a view of
+the facts at a point in time T: a newly arrived corporate action
+retroactively changes every historical adjusted bar, so no stored copy is
+ever a fact, and pre-storing "every T's view" is a category error. The
+organizing principle: **100 functions on one data beats 10 functions on
+10 data.**
+
+The algorithm surface, defined declaratively in `db/schema.sql`:
+
+| function | kind | computes |
+|---|---|---|
+| `computed.canonical_bars_daily` | view | one tape line per instrument-day (max volume) |
+| `computed.dividend_cash_by_exdate` | view | deduped statements; same-day distinct distributions summed |
+| `computed.adjustment_factor_events` | view | per-event split/dividend factors from facts + own raw closes |
+| `computed.unadjustable_dividends` | view | dividends yielding no factor, with reason |
+| `computed.adjusted_bars(policy, as_of := null)` | table macro | THE adjusted series: any policy (`none` / `split` / `split_dividend`), any as-of date T, on demand |
+| `computed.adjusted_bars_for(instrument, policy, as_of := null)` | table macro | single-instrument variant (filters inside every stage) |
+
+Adjustment semantics (encoded in those views; formulas mirrored in
+`core/adjustments.ts`): splits scale price by from/to and volume by to/from
+per event; dividends scale price by 1 − cash/prev-raw-close with same-day
+distinct distributions summed first; an event applies only where the
+(as-of-limited) series has bars after it — each series anchors to its own
+latest tape.
+
+Exactly one cache table exists, plus its freshness ledger:
 
 ```mermaid
 erDiagram
-  facts_instruments ||--o{ computed_adjustment_factors : ""
-  facts_instruments ||--o{ computed_bars_daily_adjusted : ""
-
-  computed_adjustment_factors {
-    uuid instrument_id PK
-    date event_date PK
-    varchar action_type PK "split | cash_dividend"
-    double price_factor
-    double volume_factor
-    varchar evidence "corporate_actions key"
-  }
-  computed_bars_daily_adjusted {
+  computed_bars_daily_adjusted_cache {
     uuid instrument_id PK
     date market_date PK
-    varchar adjustment_policy PK "none | split | split_dividend"
+    varchar adjustment_policy PK "split | split_dividend"
     double open
     double high
     double low
@@ -371,21 +384,23 @@ erDiagram
     varchar artifact PK
     varchar scope PK
     varchar computation_version
-    varchar inputs_watermark "e.g. max facts ingest point used"
+    varchar inputs_watermark "facts counts + max dates + version"
     timestamptz built_at
   }
 ```
 
-Adjustment policies:
+`bars_daily_adjusted_cache` is a materialized snapshot of
+`computed.adjusted_bars(policy)` at the current T — refreshed by
+`npm run computed:cache`, guarded by the `computed.build_state` watermark,
+tested identical to the macro, and always droppable. Consumers call the
+macros, or check freshness before reading the cache; the cache is never the
+source of truth.
 
-- `none` — raw as traded.
-- `split` — back-adjusted for splits only.
-- `split_dividend` — back-adjusted for splits and cash dividends.
-
-When a new corporate action arrives for an instrument, its cached computed rows
-are invalidated (watermark mismatch) and rebuilt. Later artifacts (technical
-metrics, universes, research stores) follow the same pattern and are specified
-when that phase starts.
+Why the cache exists (measured 2026-07-08): the full-market macro costs
+~78s over 5.65M bars, and `adjusted_bars_for` serves one instrument in
+~0.7s. Whole-market research scans read the fresh cache; everything else
+computes on the fly. Later artifacts (metrics, universes) follow the same
+pattern: algorithm first, cache only when profiling demands it.
 
 ## Source precedence
 

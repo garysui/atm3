@@ -78,7 +78,15 @@ dividend payers (mutual funds, CUSIP rows), never guessed.
 
 ## M4 — Computed layer
 
-Status: done 2026-07-08.
+Status: done 2026-07-08. Reworked the same day after owner review
+(schema v3): **algorithm-first**. The adjusted series is the
+`computed.adjusted_bars(policy, as_of)` table macro over facts (plus a
+single-instrument `adjusted_bars_for`, ~0.7s), the factor pipeline is a chain
+of views, and the only table is `bars_daily_adjusted_cache` — an optional,
+watermark-guarded, tested-identical snapshot of the macro (full-market
+on-the-fly measures ~78s, which is why the cache exists). The parity check
+reads the macro directly. Any as-of-T view is a function call; no T's view is
+stored as data.
 
 `core/` computations: adjustment factors from corporate actions; adjusted daily
 bars per policy (`none`/`split`/`split_dividend`) as pure functions with

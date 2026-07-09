@@ -6,8 +6,7 @@ import test from 'node:test'
 import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 
 const expectedTables = [
-  'computed.adjustment_factors',
-  'computed.bars_daily_adjusted',
+  'computed.bars_daily_adjusted_cache',
   'computed.build_state',
   'facts.bars_daily',
   'facts.corporate_actions',

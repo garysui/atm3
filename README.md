@@ -29,11 +29,13 @@ vendor ingestion; atm2 is a design and behavior reference only.
    ground truth.
 2. **Everything else is computed.** Organized facts (instruments, symbol
    history, corporate actions, bars, calendars) are deterministic computations
-   over raw data. Derived data (adjusted bars, metrics) are pure functions of
-   facts plus a point in time T. Persisting computed results is a performance
-   cache, never a source of truth — every computed table must be rebuildable,
-   and the database file itself is disposable: it holds nothing that
-   `data/raw/` cannot reproduce.
+   over raw data. Derived data (adjusted bars, metrics) are **functions** of
+   facts plus a point in time T — e.g. `computed.adjusted_bars(policy, as_of)`
+   computes any T's view on demand; none of those views is data. 100
+   functions on one data beats 10 functions on 10 data. Persisting a computed
+   result is a performance cache, never a source of truth — every cache is a
+   verified snapshot of its function, and the database file itself is
+   disposable: it holds nothing that `data/raw/` cannot reproduce.
 3. **One market universe.** All markets share one database and one identity
    space. `market_scope` is an attribute, filtering is a query.
 4. **A ticker is not an identity.** Symbols are time-ranged lookup handles that

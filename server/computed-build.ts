@@ -2,36 +2,22 @@ import type { DuckDBConnection } from '@duckdb/node-api'
 import { ADJUSTMENT_COMPUTATION_VERSION } from '../core/adjustments.ts'
 import { logger } from './log.ts'
 
-// Computed layer: pure functions of facts, cached in computed.* tables.
-// Dropping every computed table loses nothing but time. A build is skipped
-// when computed.build_state already records the same inputs watermark and
-// computation version; any change in facts (or in the computation) rebuilds.
-//
-// Cached policies are 'split' and 'split_dividend'; policy 'none' IS
-// facts.bars_daily and is never duplicated here.
-//
-// The factor formulas mirror core/adjustments.ts — per-event factors from
-// corporate-action facts and our own raw closes. Vendor adjustment factors
-// are never used (Polygon's dividend factors are cumulative, not per-event).
+// The adjusted-bars ALGORITHM is computed.adjusted_bars(policy, as_of) —
+// a table macro over facts, defined in db/schema.sql. This module only
+// maintains the optional accelerator: a materialized snapshot of that macro
+// at the current T in computed.bars_daily_adjusted_cache, watermarked so a
+// stale snapshot is never silently served. Dropping the cache loses nothing
+// but time; consumers without a freshness check must call the macro.
 
-export type ComputedBuildResult = {
+export type CacheRefreshResult = {
   skipped: boolean
   watermark: string
-  splitFactors: number
-  dividendFactors: number
-  dividendsSkipped: {
-    noPrevClose: number
-    nonPositiveFactor: number
-    nonUsdOnly: number
-  }
-  adjustedBars: { split: number; split_dividend: number }
+  factorEvents: { splits: number; dividends: number }
+  unadjustableDividends: Array<Record<string, unknown>>
+  cacheRows: { split: number; split_dividend: number }
 }
 
-const artifacts = [
-  { artifact: 'adjustment_factors', scope: 'all' },
-  { artifact: 'bars_daily_adjusted', scope: 'split' },
-  { artifact: 'bars_daily_adjusted', scope: 'split_dividend' },
-]
+const cachedPolicies = ['split', 'split_dividend'] as const
 
 async function readWatermark(connection: DuckDBConnection): Promise<string> {
   const result = await connection.runAndReadAll(`
@@ -52,26 +38,24 @@ async function readWatermark(connection: DuckDBConnection): Promise<string> {
   )
 }
 
-async function isFresh(
+export async function isCacheFresh(
   connection: DuckDBConnection,
-  watermark: string,
+  watermark?: string,
 ): Promise<boolean> {
+  const expected = watermark ?? (await readWatermark(connection))
   const result = await connection.runAndReadAll(
     `
       select count(*) as n
       from computed.build_state
-      where artifact || ':' || scope in (
-        'adjustment_factors:all',
-        'bars_daily_adjusted:split',
-        'bars_daily_adjusted:split_dividend'
-      )
+      where artifact = 'bars_daily_adjusted_cache'
+        and scope in ('split', 'split_dividend')
         and computation_version = $version
         and inputs_watermark = $watermark
     `,
-    { version: ADJUSTMENT_COMPUTATION_VERSION, watermark },
+    { version: ADJUSTMENT_COMPUTATION_VERSION, watermark: expected },
   )
 
-  return Number(result.getRowObjectsJson()[0]?.n) === artifacts.length
+  return Number(result.getRowObjectsJson()[0]?.n) === cachedPolicies.length
 }
 
 async function count(
@@ -82,271 +66,93 @@ async function count(
   return Number(result.getRowObjectsJson()[0]?.n ?? 0)
 }
 
-export async function buildComputed(
+async function collectStats(
   connection: DuckDBConnection,
-  options: { force?: boolean } = {},
-): Promise<ComputedBuildResult> {
-  const watermark = await readWatermark(connection)
+  skipped: boolean,
+  watermark: string,
+): Promise<CacheRefreshResult> {
+  const unadjustable = await connection.runAndReadAll(`
+    select reason, count(*) as entries
+    from computed.unadjustable_dividends
+    group by reason
+    order by reason
+  `)
 
-  if (!options.force && (await isFresh(connection, watermark))) {
-    logger.info({ watermark }, 'computed layer is fresh, skipping build')
-    return {
-      skipped: true,
-      watermark,
-      splitFactors: await count(
+  return {
+    skipped,
+    watermark,
+    factorEvents: {
+      splits: await count(
         connection,
-        `select count(*) as n from computed.adjustment_factors
+        `select count(*) as n from computed.adjustment_factor_events
          where action_type = 'split'`,
       ),
-      dividendFactors: await count(
+      dividends: await count(
         connection,
-        `select count(*) as n from computed.adjustment_factors
+        `select count(*) as n from computed.adjustment_factor_events
          where action_type = 'cash_dividend'`,
       ),
-      dividendsSkipped: { noPrevClose: 0, nonPositiveFactor: 0, nonUsdOnly: 0 },
-      adjustedBars: {
-        split: await count(
-          connection,
-          `select count(*) as n from computed.bars_daily_adjusted
-           where adjustment_policy = 'split'`,
-        ),
-        split_dividend: await count(
-          connection,
-          `select count(*) as n from computed.bars_daily_adjusted
-           where adjustment_policy = 'split_dividend'`,
-        ),
-      },
-    }
+    },
+    unadjustableDividends: unadjustable.getRowObjectsJson() as Array<
+      Record<string, unknown>
+    >,
+    cacheRows: {
+      split: await count(
+        connection,
+        `select count(*) as n from computed.bars_daily_adjusted_cache
+         where adjustment_policy = 'split'`,
+      ),
+      split_dividend: await count(
+        connection,
+        `select count(*) as n from computed.bars_daily_adjusted_cache
+         where adjustment_policy = 'split_dividend'`,
+      ),
+    },
+  }
+}
+
+export async function refreshAdjustedBarsCache(
+  connection: DuckDBConnection,
+  options: { force?: boolean } = {},
+): Promise<CacheRefreshResult> {
+  const watermark = await readWatermark(connection)
+
+  if (!options.force && (await isCacheFresh(connection, watermark))) {
+    logger.info({ watermark }, 'adjusted-bars cache is fresh, skipping')
+    return collectStats(connection, true, watermark)
   }
 
   await connection.run('begin transaction')
 
   try {
-    // One canonical tape line per instrument-day (max volume) — dividend
-    // prev-close lookups and adjusted bars both use it.
-    await connection.run(`
-      create or replace temp table t_canon as
-      select instrument_id, market_date, symbol_as_traded,
-             open, high, low, close, volume, vwap
-      from facts.bars_daily
-      where source_id = 'polygon'
-      qualify row_number() over (
-        partition by instrument_id, market_date
-        order by volume desc nulls last, symbol_as_traded
-      ) = 1
-    `)
+    await connection.run('delete from computed.bars_daily_adjusted_cache')
 
-    await connection.run('delete from computed.adjustment_factors')
-
-    // Splits: per-event by construction (see core/adjustments.ts:
-    // price = from/to, volume = to/from). A company executes at most one
-    // split per day, but vendors state the same action under BOTH tickers
-    // around a rename — so per (instrument, ex_date) exactly ONE statement
-    // becomes the factor (lowest source_action_id, deterministic), never a
-    // product of statements. Conflicting same-day ratios are counted.
-    await connection.run(`
-      insert into computed.adjustment_factors (
-        instrument_id, event_date, action_type, price_factor, volume_factor,
-        evidence
-      )
-      with statements as (
-        select *,
-          row_number() over (
-            partition by instrument_id, ex_date
-            order by source_action_id
-          ) as statement_rank,
-          count(distinct split_from || ':' || split_to) over (
-            partition by instrument_id, ex_date
-          ) as ratio_variants,
-          string_agg(source_id || ':' || source_action_id, ',') over (
-            partition by instrument_id, ex_date
-          ) as all_evidence
-        from facts.corporate_actions
-        where action_type = 'split'
-          and coalesce(split_from, 0) > 0
-          and coalesce(split_to, 0) > 0
-      )
-      select
-        instrument_id, ex_date, 'split',
-        split_from / split_to,
-        split_to / split_from,
-        all_evidence
-      from statements
-      where statement_rank = 1
-    `)
-
-    const conflictingSplitStatements = await count(
-      connection,
-      `
-        select count(*) as n from (
-          select instrument_id, ex_date
-          from facts.corporate_actions
-          where action_type = 'split'
-            and coalesce(split_from, 0) > 0
-            and coalesce(split_to, 0) > 0
-          group by instrument_id, ex_date
-          having count(distinct split_from || ':' || split_to) > 1
-        )
-      `,
-    )
-
-    if (conflictingSplitStatements > 0) {
-      logger.warn(
-        { conflictingSplitStatements },
-        'same-day split statements disagree on ratio; picked deterministically',
-      )
-    }
-
-    // Dividends: duplicate statements of one distribution (same day, type,
-    // amount, currency — the rename pattern again) collapse first; then
-    // same-day DISTINCT distributions (e.g. regular + special) SUM their
-    // cash (they reduce one prev close once); then factor =
-    // 1 - cash / prev raw close, where prev close is the last unadjusted
-    // close strictly before the ex date.
-    await connection.run(`
-      create or replace temp table t_div as
-      with statements as (
-        select distinct
-          instrument_id, ex_date,
-          coalesce(dividend_type, '') as dividend_type,
-          cash_amount,
-          coalesce(currency, 'USD') as currency
-        from facts.corporate_actions
-        where action_type = 'cash_dividend' and coalesce(cash_amount, 0) > 0
-      ),
-      cash as (
-        select
-          instrument_id,
-          ex_date,
-          coalesce(sum(cash_amount)
-            filter (currency = 'USD'), 0) as cash_usd,
-          count(*) filter (currency <> 'USD') as non_usd_rows,
-          string_agg(dividend_type || ':' || cash_amount, ','
-                     order by dividend_type, cash_amount) as evidence
-        from statements
-        group by instrument_id, ex_date
-      )
-      select c.*, b.close as prev_close
-      from cash c
-      asof left join t_canon b
-        on c.instrument_id = b.instrument_id and c.ex_date > b.market_date
-    `)
-
-    await connection.run(`
-      insert into computed.adjustment_factors (
-        instrument_id, event_date, action_type, price_factor, volume_factor,
-        evidence
-      )
-      select
-        instrument_id, ex_date, 'cash_dividend',
-        1 - cash_usd / prev_close,
-        1.0,
-        evidence
-      from t_div
-      where cash_usd > 0
-        and prev_close is not null
-        and prev_close > cash_usd
-    `)
-
-    const dividendsSkipped = {
-      noPrevClose: await count(
-        connection,
-        `select count(*) as n from t_div
-         where cash_usd > 0 and prev_close is null`,
-      ),
-      nonPositiveFactor: await count(
-        connection,
-        `select count(*) as n from t_div
-         where cash_usd > 0 and prev_close is not null
-           and prev_close <= cash_usd`,
-      ),
-      nonUsdOnly: await count(
-        connection,
-        `select count(*) as n from t_div
-         where cash_usd = 0 and non_usd_rows > 0`,
-      ),
-    }
-
-    await connection.run('delete from computed.bars_daily_adjusted')
-
-    for (const policy of ['split', 'split_dividend'] as const) {
-      const actionTypes =
-        policy === 'split' ? `('split')` : `('split', 'cash_dividend')`
-
-      // A bar's cumulative factor is the product over events with
-      // ex_date > bar date: reverse-cumulative products per instrument,
-      // joined by the interval [previous event, event). Events past the
-      // instrument's last bar (future-dated or post-delisting statements)
-      // do not apply — each series anchors to its own latest tape.
+    for (const policy of cachedPolicies) {
+      // The cache is BY CONSTRUCTION the macro's output — one algorithm.
       await connection.run(`
-        insert into computed.bars_daily_adjusted (
+        insert into computed.bars_daily_adjusted_cache (
           instrument_id, market_date, adjustment_policy,
           open, high, low, close, volume, vwap,
           cum_price_factor, cum_volume_factor, symbol_as_traded,
           computation_version
         )
-        with f as (
-          select af.instrument_id, af.event_date,
-                 product(af.price_factor) as pf,
-                 product(af.volume_factor) as vf
-          from computed.adjustment_factors af
-          join (
-            select instrument_id, max(market_date) as last_bar_date
-            from t_canon
-            group by instrument_id
-          ) lb
-            on lb.instrument_id = af.instrument_id
-            and af.event_date <= lb.last_bar_date
-          where af.action_type in ${actionTypes}
-          group by af.instrument_id, af.event_date
-        ),
-        cum as (
-          select
-            instrument_id,
-            event_date,
-            lag(event_date) over (
-              partition by instrument_id order by event_date
-            ) as prev_event_date,
-            product(pf) over (
-              partition by instrument_id order by event_date desc
-            ) as cum_pf,
-            product(vf) over (
-              partition by instrument_id order by event_date desc
-            ) as cum_vf
-          from f
-        )
         select
-          b.instrument_id,
-          b.market_date,
-          '${policy}',
-          b.open * coalesce(c.cum_pf, 1),
-          b.high * coalesce(c.cum_pf, 1),
-          b.low * coalesce(c.cum_pf, 1),
-          b.close * coalesce(c.cum_pf, 1),
-          b.volume * coalesce(c.cum_vf, 1),
-          b.vwap * coalesce(c.cum_pf, 1),
-          coalesce(c.cum_pf, 1),
-          coalesce(c.cum_vf, 1),
-          b.symbol_as_traded,
+          instrument_id, market_date, adjustment_policy,
+          open, high, low, close, volume, vwap,
+          cum_price_factor, cum_volume_factor, symbol_as_traded,
           '${ADJUSTMENT_COMPUTATION_VERSION}'
-        from t_canon b
-        left join cum c
-          on c.instrument_id = b.instrument_id
-          and b.market_date < c.event_date
-          and (c.prev_event_date is null or b.market_date >= c.prev_event_date)
+        from computed.adjusted_bars('${policy}')
       `)
-    }
 
-    for (const { artifact, scope } of artifacts) {
       await connection.run(
         `
           insert or replace into computed.build_state (
             artifact, scope, computation_version, inputs_watermark, built_at
-          ) values ($artifact, $scope, $version, $watermark, now())
+          ) values ('bars_daily_adjusted_cache', $scope, $version, $watermark,
+                    now())
         `,
         {
-          artifact,
-          scope,
+          scope: policy,
           version: ADJUSTMENT_COMPUTATION_VERSION,
           watermark,
         },
@@ -354,37 +160,6 @@ export async function buildComputed(
     }
 
     await connection.run('commit')
-
-    const result: ComputedBuildResult = {
-      skipped: false,
-      watermark,
-      splitFactors: await count(
-        connection,
-        `select count(*) as n from computed.adjustment_factors
-         where action_type = 'split'`,
-      ),
-      dividendFactors: await count(
-        connection,
-        `select count(*) as n from computed.adjustment_factors
-         where action_type = 'cash_dividend'`,
-      ),
-      dividendsSkipped,
-      adjustedBars: {
-        split: await count(
-          connection,
-          `select count(*) as n from computed.bars_daily_adjusted
-           where adjustment_policy = 'split'`,
-        ),
-        split_dividend: await count(
-          connection,
-          `select count(*) as n from computed.bars_daily_adjusted
-           where adjustment_policy = 'split_dividend'`,
-        ),
-      },
-    }
-
-    logger.info(result, 'built computed layer')
-    return result
   } catch (error) {
     try {
       await connection.run('rollback')
@@ -393,4 +168,8 @@ export async function buildComputed(
     }
     throw error
   }
+
+  const result = await collectStats(connection, false, watermark)
+  logger.info(result, 'adjusted-bars cache refreshed')
+  return result
 }

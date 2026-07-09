@@ -9,7 +9,7 @@
     "sql": "tsx scripts/sql.ts",
     "raw:reindex": "tsx scripts/reindex-raw.ts",
     "facts:build": "tsx scripts/build-facts.ts",
-    "computed:build": "tsx scripts/build-computed.ts",
+    "computed:cache": "tsx scripts/refresh-computed-cache.ts",
     "verify:adjustments": "tsx scripts/verify-adjustments.ts",
     "ingest:polygon:reference-tickers": "tsx scripts/ingest-polygon-reference-tickers.ts",
     "ingest:polygon:exchanges": "tsx scripts/ingest-polygon-exchanges.ts",

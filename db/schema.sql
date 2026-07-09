@@ -232,23 +232,223 @@ create table if not exists facts.bars_daily (
 );
 
 -- computed ---------------------------------------------------------------
--- Caches of pure functions over facts + a point in time. Dropping any
--- computed table must lose nothing but time.
+-- The computed layer is ALGORITHMS over facts: views and table macros,
+-- computed at query time. Adjusted data is a view of the facts at a point
+-- in time T, never data — a new corporate action retroactively changes
+-- every historical adjusted bar. "100 functions on one data."
+--
+-- Exactly one optional cache table exists (bars_daily_adjusted_cache); it
+-- is a materialized snapshot of the macro at the current T, verified
+-- identical, invalidated by watermark, and always droppable.
 
-create table if not exists computed.adjustment_factors (
-  instrument_id uuid not null,
-  event_date date not null,
-  action_type varchar not null, -- split | cash_dividend
-  price_factor double not null,
-  volume_factor double not null,
-  evidence varchar not null, -- facts.corporate_actions key
-  primary key (instrument_id, event_date, action_type)
-);
+-- One canonical tape line per instrument-day (max volume; one instrument
+-- can trade as concurrent lines, e.g. when-issued tickers).
+create or replace view computed.canonical_bars_daily as
+select instrument_id, market_date, symbol_as_traded,
+       open, high, low, close, volume, vwap
+from facts.bars_daily
+where source_id = 'polygon'
+qualify row_number() over (
+  partition by instrument_id, market_date
+  order by volume desc nulls last, symbol_as_traded
+) = 1;
 
-create table if not exists computed.bars_daily_adjusted (
+-- Same-day dividend cash per instrument: duplicate statements of one
+-- distribution (same day/type/amount/currency — vendors restate around
+-- renames) collapse via distinct; DISTINCT same-day distributions
+-- (regular + special) SUM, because they reduce one prev close once.
+create or replace view computed.dividend_cash_by_exdate as
+with statements as (
+  select distinct
+    instrument_id, ex_date,
+    coalesce(dividend_type, '') as dividend_type,
+    cash_amount,
+    coalesce(currency, 'USD') as currency
+  from facts.corporate_actions
+  where action_type = 'cash_dividend' and coalesce(cash_amount, 0) > 0
+)
+select
+  instrument_id,
+  ex_date,
+  coalesce(sum(cash_amount) filter (currency = 'USD'), 0) as cash_usd,
+  count(*) filter (currency <> 'USD') as non_usd_rows,
+  string_agg(dividend_type || ':' || cash_amount, ','
+             order by dividend_type, cash_amount) as evidence
+from statements
+group by instrument_id, ex_date;
+
+-- Per-event adjustment factors from corporate-action facts and our own raw
+-- closes (see core/adjustments.ts). Vendor adjustment factors are never
+-- used (Polygon dividend factors are cumulative, not per-event). A company
+-- executes at most one split per day: duplicate same-day split statements
+-- collapse to one (lowest source_action_id), never a product.
+create or replace view computed.adjustment_factor_events as
+with split_statements as (
+  select *,
+    row_number() over (
+      partition by instrument_id, ex_date order by source_action_id
+    ) as statement_rank,
+    string_agg(source_id || ':' || source_action_id, ',') over (
+      partition by instrument_id, ex_date
+    ) as all_evidence
+  from facts.corporate_actions
+  where action_type = 'split'
+    and coalesce(split_from, 0) > 0
+    and coalesce(split_to, 0) > 0
+)
+select
+  instrument_id, ex_date as event_date, 'split' as action_type,
+  split_from / split_to as price_factor,
+  split_to / split_from as volume_factor,
+  all_evidence as evidence
+from split_statements
+where statement_rank = 1
+union all
+select
+  c.instrument_id, c.ex_date as event_date, 'cash_dividend' as action_type,
+  1 - c.cash_usd / b.close as price_factor,
+  1.0 as volume_factor,
+  c.evidence
+from computed.dividend_cash_by_exdate c
+asof join computed.canonical_bars_daily b
+  on c.instrument_id = b.instrument_id and c.ex_date > b.market_date
+where c.cash_usd > 0 and b.close > c.cash_usd;
+
+-- Dividends that produce no factor, with the reason — quarantine-style
+-- visibility as a function, not a stored table.
+create or replace view computed.unadjustable_dividends as
+select
+  c.instrument_id, c.ex_date, c.cash_usd, c.non_usd_rows,
+  b.close as prev_close,
+  case when c.cash_usd = 0 then 'non_usd_only'
+       when b.close is null then 'no_prev_close'
+       else 'cash_exceeds_prev_close' end as reason
+from computed.dividend_cash_by_exdate c
+asof left join computed.canonical_bars_daily b
+  on c.instrument_id = b.instrument_id and c.ex_date > b.market_date
+where c.cash_usd = 0 or b.close is null or b.close <= c.cash_usd;
+
+-- THE adjusted-bars algorithm: any policy, any as-of date T, computed on
+-- the fly from facts. A bar's cumulative factor is the product over events
+-- with ex_date > bar date; an event applies only where the (as-of-limited)
+-- series has bars after it — each series anchors to its own latest tape.
+-- Policies: 'none' | 'split' | 'split_dividend'.
+create or replace macro computed.adjusted_bars(policy, as_of := null) as table
+with bars as (
+  select * from computed.canonical_bars_daily
+  where as_of is null or market_date <= as_of
+),
+last_bar as (
+  select instrument_id, max(market_date) as last_bar_date
+  from bars
+  group by instrument_id
+),
+f as (
+  select af.instrument_id, af.event_date,
+         product(af.price_factor) as pf,
+         product(af.volume_factor) as vf
+  from computed.adjustment_factor_events af
+  join last_bar lb
+    on lb.instrument_id = af.instrument_id
+    and af.event_date <= lb.last_bar_date
+  where (af.action_type = 'split'
+           and policy in ('split', 'split_dividend'))
+     or (af.action_type = 'cash_dividend'
+           and policy = 'split_dividend')
+  group by af.instrument_id, af.event_date
+),
+cum as (
+  select
+    instrument_id,
+    event_date,
+    lag(event_date) over (
+      partition by instrument_id order by event_date
+    ) as prev_event_date,
+    product(pf) over (
+      partition by instrument_id order by event_date desc
+    ) as cum_pf,
+    product(vf) over (
+      partition by instrument_id order by event_date desc
+    ) as cum_vf
+  from f
+)
+select
+  b.instrument_id,
+  b.market_date,
+  policy as adjustment_policy,
+  b.open * coalesce(c.cum_pf, 1) as open,
+  b.high * coalesce(c.cum_pf, 1) as high,
+  b.low * coalesce(c.cum_pf, 1) as low,
+  b.close * coalesce(c.cum_pf, 1) as close,
+  b.volume * coalesce(c.cum_vf, 1) as volume,
+  b.vwap * coalesce(c.cum_pf, 1) as vwap,
+  coalesce(c.cum_pf, 1) as cum_price_factor,
+  coalesce(c.cum_vf, 1) as cum_volume_factor,
+  b.symbol_as_traded
+from bars b
+left join cum c
+  on c.instrument_id = b.instrument_id
+  and b.market_date < c.event_date
+  and (c.prev_event_date is null or b.market_date >= c.prev_event_date);
+
+-- Single-instrument variant with the filter INSIDE every stage, so one
+-- chart/series query prunes to one instrument instead of paying the
+-- full-market computation.
+create or replace macro computed.adjusted_bars_for(instrument, policy, as_of := null) as table
+with bars as (
+  select * from computed.canonical_bars_daily
+  where instrument_id = instrument
+    and (as_of is null or market_date <= as_of)
+),
+last_bar as (
+  select max(market_date) as last_bar_date from bars
+),
+f as (
+  select af.event_date,
+         product(af.price_factor) as pf,
+         product(af.volume_factor) as vf
+  from computed.adjustment_factor_events af, last_bar lb
+  where af.instrument_id = instrument
+    and af.event_date <= lb.last_bar_date
+    and ((af.action_type = 'split'
+            and policy in ('split', 'split_dividend'))
+      or (af.action_type = 'cash_dividend'
+            and policy = 'split_dividend'))
+  group by af.event_date
+),
+cum as (
+  select
+    event_date,
+    lag(event_date) over (order by event_date) as prev_event_date,
+    product(pf) over (order by event_date desc) as cum_pf,
+    product(vf) over (order by event_date desc) as cum_vf
+  from f
+)
+select
+  b.instrument_id,
+  b.market_date,
+  policy as adjustment_policy,
+  b.open * coalesce(c.cum_pf, 1) as open,
+  b.high * coalesce(c.cum_pf, 1) as high,
+  b.low * coalesce(c.cum_pf, 1) as low,
+  b.close * coalesce(c.cum_pf, 1) as close,
+  b.volume * coalesce(c.cum_vf, 1) as volume,
+  b.vwap * coalesce(c.cum_pf, 1) as vwap,
+  coalesce(c.cum_pf, 1) as cum_price_factor,
+  coalesce(c.cum_vf, 1) as cum_volume_factor,
+  b.symbol_as_traded
+from bars b
+left join cum c
+  on b.market_date < c.event_date
+  and (c.prev_event_date is null or b.market_date >= c.prev_event_date);
+
+-- Optional accelerator: a snapshot of computed.adjusted_bars(policy) at the
+-- current T. Refreshed by `npm run computed:cache`; consumers must check
+-- computed.build_state freshness or use the macro directly.
+create table if not exists computed.bars_daily_adjusted_cache (
   instrument_id uuid not null,
   market_date date not null,
-  adjustment_policy varchar not null, -- none | split | split_dividend
+  adjustment_policy varchar not null, -- split | split_dividend
   open double not null,
   high double not null,
   low double not null,

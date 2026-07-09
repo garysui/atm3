@@ -19,7 +19,8 @@ try {
   section('FACTS — daily bars', status.bars)
   section('FACTS — corporate actions', status.corporateActions)
   section('FACTS — trading days', status.tradingDays)
-  section('COMPUTED — cached artifacts', status.computed)
+  section('COMPUTED — algorithms (views/macros over facts)', status.computedAlgorithms)
+  section('COMPUTED — cache snapshots (droppable)', status.computed)
   section('OPS — unresolved (quarantine)', status.unresolved)
   section('OPS — recent runs', status.runs)
 } finally {

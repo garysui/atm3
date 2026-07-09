@@ -10,6 +10,7 @@ export type StatusReport = {
   bars: Array<Record<string, unknown>>
   corporateActions: Array<Record<string, unknown>>
   tradingDays: Array<Record<string, unknown>>
+  computedAlgorithms: Array<Record<string, unknown>>
   computed: Array<Record<string, unknown>>
   unresolved: Array<Record<string, unknown>>
   runs: Array<Record<string, unknown>>
@@ -110,10 +111,23 @@ export async function collectStatus(
         order by calendar_id
       `,
     ),
+    computedAlgorithms: await rows(
+      connection,
+      `
+        select view_name as name, 'view' as kind
+        from duckdb_views()
+        where schema_name = 'computed'
+        union all
+        select distinct function_name, 'macro'
+        from duckdb_functions()
+        where schema_name = 'computed'
+        order by kind desc, name
+      `,
+    ),
     computed: await rows(
       connection,
       `
-        select table_name as artifact, estimated_size as rows
+        select table_name as cache_table, estimated_size as rows
         from duckdb_tables()
         where schema_name = 'computed'
         order by table_name

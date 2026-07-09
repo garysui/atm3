@@ -55,7 +55,7 @@ test('read-only open works, blocks writes, and status collects on empty db', asy
       const status = await collectStatus(readOnly.connection)
       assert.deepEqual(status.raw, [])
       assert.deepEqual(status.bars, [])
-      assert.equal(status.computed.length, 3)
+      assert.equal(status.computed.length, 2)
 
       await assert.rejects(
         readOnly.connection.run(

@@ -49,9 +49,14 @@ The data layers are strict; lower layers never read from higher ones:
 2. **facts** — organized facts computed deterministically from raw (identity,
    symbol history, corporate actions, calendars, unadjusted bars). Persisted in
    the `facts` schema for queryability, but must always be rebuildable from raw.
-3. **computed** — pure functions of facts + a point in time T (adjusted bars,
-   metrics, universes). Persisting them is a cache. A computed table that
-   cannot be dropped and rebuilt is a design bug.
+3. **computed** — ALGORITHMS over facts: schema views and table macros
+   (e.g. `computed.adjusted_bars(policy, as_of)`), pure functions of facts +
+   a point in time T. Adjusted output is a view at T, never a fact — a new
+   corporate action retroactively changes every historical adjusted bar.
+   Consume the macros/views; read a cache table only behind a
+   `computed.build_state` freshness check. Never add a materialized derived
+   table without the view/macro defining it first, and never one that cannot
+   be dropped and rebuilt.
 4. **ops** — ingestion runs, sync cursors, quarantine. Operational state, not
    market truth.
 

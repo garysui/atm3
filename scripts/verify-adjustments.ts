@@ -35,14 +35,15 @@ try {
       where (b->>'$.T') is not null
     ),
     ours as (
+      -- The ALGORITHM is compared, not the cache: adjusted bars come from
+      -- the computed.adjusted_bars macro at query time.
       -- Vendor adjusted files are per-TICKER: they never carry adjustments
       -- across a rename, while our instrument-level series correctly does.
       -- Parity is therefore scoped to instruments that traded under exactly
       -- one ticker in the window, where the two frames agree.
       select instrument_id, symbol_as_traded as symbol, market_date,
              close as close_ours, volume as volume_ours
-      from computed.bars_daily_adjusted
-      where adjustment_policy = 'split'
+      from computed.adjusted_bars('split')
       qualify count(distinct symbol_as_traded)
         over (partition by instrument_id) = 1
     )
@@ -105,12 +106,10 @@ try {
 
   const coverage = await db.connection.runAndReadAll(`
     select
-      (select count(*) from computed.bars_daily_adjusted
-       where adjustment_policy = 'split') as ours,
+      (select count(*) from computed.canonical_bars_daily) as ours,
       (select count(*) from t_parity) as compared,
       (select count(*) from (
-        select instrument_id from computed.bars_daily_adjusted
-        where adjustment_policy = 'split'
+        select instrument_id from computed.canonical_bars_daily
         group by instrument_id
         having count(distinct symbol_as_traded) > 1
       )) as renamed_instruments_excluded
