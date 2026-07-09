@@ -24,21 +24,32 @@ export async function seedFacts(db: Atm3Db): Promise<void> {
     )
   }
 
-  const symbols: Array<[string, string, string]> = [
-    // [symbol_id, instrument, symbol] — current usages for API lookups.
-    ['11111111-1111-4111-8111-111111111111', A, 'AAA'],
-    ['22222222-2222-4222-8222-222222222222', B, 'BBBW'],
-  ]
+  const symbols: Array<[string, string, string, string | null, string | null]> =
+    [
+      // [symbol_id, instrument, symbol, valid_from, valid_to]
+      ['11111111-1111-4111-8111-111111111111', A, 'AAA', null, null],
+      ['22222222-2222-4222-8222-222222222222', B, 'BBBW', null, null],
+      // Historical usage: A traded as AAAOLD before renaming (searching a
+      // past ticker must still surface the instrument, labeled with dates).
+      ['33333333-3333-4333-8333-333333333333', A, 'AAAOLD', '2020-01-01', '2022-01-01'],
+    ]
 
-  for (const [symbolId, instrument, symbol] of symbols) {
+  for (const [symbolId, instrument, symbol, validFrom, validTo] of symbols) {
     await db.connection.run(
       `
         insert into facts.symbols (
-          symbol_id, instrument_id, market_scope, symbol
+          symbol_id, instrument_id, market_scope, symbol, valid_from, valid_to
         ) values (cast($symbol_id as uuid), cast($instrument as uuid),
-                  'us_stocks', $symbol)
+                  'us_stocks', $symbol, cast($valid_from as date),
+                  cast($valid_to as date))
       `,
-      { symbol_id: symbolId, instrument, symbol },
+      {
+        symbol_id: symbolId,
+        instrument,
+        symbol,
+        valid_from: validFrom,
+        valid_to: validTo,
+      },
     )
   }
 

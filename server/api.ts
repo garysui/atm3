@@ -93,6 +93,9 @@ export async function createApiServer(
     response.json(status)
   })
 
+  // Historical ticker usages match too — searching FB must surface Meta
+  // (FB until 2022-06-09) alongside the ETF that reused the ticker, each
+  // labeled with its usage window. A ticker is a time-ranged handle.
   app.get('/api/instruments', async (request, response) => {
     const query = searchQuerySchema.parse(request.query)
     const rows = await pool.run((connection) =>
@@ -102,6 +105,10 @@ export async function createApiServer(
           select
             cast(i.instrument_id as varchar) as instrument_id,
             s.symbol,
+            case when s.valid_to is null then 'current'
+                 else coalesce(cast(s.valid_from as varchar), '…')
+                      || ' → ' || cast(s.valid_to as varchar)
+            end as symbol_usage,
             i.name,
             i.instrument_type,
             i.security_form,
@@ -111,15 +118,16 @@ export async function createApiServer(
           from facts.symbols s
           join facts.instruments i using (instrument_id)
           where s.market_scope = $scope
-            and s.valid_to is null
             and (
               upper(s.symbol) like upper($q) || '%'
               or i.name ilike '%' || $q || '%'
             )
           order by
             (upper(s.symbol) = upper($q)) desc,
+            (s.valid_to is null) desc,
             length(s.symbol),
-            s.symbol
+            s.symbol,
+            s.valid_to desc nulls first
           limit $limit
         `,
         { scope: query.scope, q: query.q, limit: query.limit },

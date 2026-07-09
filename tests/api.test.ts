@@ -60,10 +60,22 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     const found = (await (
       await fetch(`${base}/api/instruments?scope=us_stocks&q=AAA`)
     ).json()) as Array<Record<string, unknown>>
-    assert.equal(found.length, 1)
+    assert.equal(found.length, 2) // current AAA first, historical AAAOLD after
     assert.equal(found[0]?.symbol, 'AAA')
+    assert.equal(found[0]?.symbol_usage, 'current')
     assert.equal(found[0]?.name, 'Alpha Corp')
     assert.equal(found[0]?.instrument_id, A)
+    assert.equal(found[1]?.symbol, 'AAAOLD')
+    assert.equal(found[1]?.symbol_usage, '2020-01-01 → 2022-01-01')
+
+    // Searching a PAST ticker surfaces the instrument that used it, with the
+    // usage window labeled (the FB→Meta case).
+    const historical = (await (
+      await fetch(`${base}/api/instruments?scope=us_stocks&q=AAAOLD`)
+    ).json()) as Array<Record<string, unknown>>
+    assert.equal(historical.length, 1)
+    assert.equal(historical[0]?.instrument_id, A)
+    assert.equal(historical[0]?.symbol_usage, '2020-01-01 → 2022-01-01')
 
     const detail = (await (
       await fetch(`${base}/api/instruments/${A}`)
@@ -74,7 +86,7 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
       barsSummary: Record<string, unknown>
     }
     assert.equal(detail.instrument.name, 'Alpha Corp')
-    assert.equal(detail.symbols.length, 1)
+    assert.equal(detail.symbols.length, 2) // AAAOLD (historical) + AAA (current)
     assert.equal(detail.corporateActions.length, 7)
     assert.equal(Number(detail.barsSummary.bars), 3)
 
