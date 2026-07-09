@@ -144,9 +144,31 @@ inspection tools remain available when the server is stopped (DuckDB: one
 writer process OR readers). Docs are also served in-app (Docs tab, rendered
 markdown + zoomable diagrams).
 
+## M6 — Intraday minute bars
+
+Status: done 2026-07-09 (initial days; history accumulates via the pipeline,
+window controlled by `ATM3_INTRADAY_BACKFILL_FROM`).
+
+Raw: vendor flat files — one csv.gz per trading day, whole market, landed
+byte-identical via the S3 endpoint (aws profile, not the REST key). Facts:
+parse-only parquet per day, row-count-verified against raw, with identity
+joined at QUERY time (`facts.bars_minute` + quarantine view) so
+symbol-history refinements retroactively cover all minute history with zero
+rebuilds. Computed: `adjusted_bars_minute(policy, as_of)` (+ `_for`) reusing
+the same day-grained factor events and anchor rule. Pipeline: two new steps
+(minute flat files → build minute facts). Known-closed days are skipped via
+grouped-daily evidence; unpublished days retry next run.
+
+Evidence: 2026-07-06…08 ingested = 5,637,619 minute bars across ~11.9k
+instruments/day; SPY shows full 04:00–19:59 ET sessions; the offline fixture
+test covers raw→parquet→identity→adjusted→quarantine→rebuild; and
+`npm run verify:intraday` proved the cross-source volume-subset invariant
+(0 violations) while recording close-agreement baselines — producing the
+two-tapes doctrine (data-model, phenomena §13): daily bars are authoritative
+for official OHLC, minute bars for intraday paths.
+
 ## Later (explicitly out of scope now)
 
-- Intraday minute bars via Massive/Polygon flat files (parquet + views)
 - Earnings (Benzinga) and SEC filings events
 - CN market via Tushare (schema already supports it: new market_scope,
   calendar, connector — same tables)

@@ -15,19 +15,20 @@ flowchart TD
 
   subgraph RAW["1 · raw — untouched truth, append-only files"]
     ingest["npm run ingest:polygon:*<br/>idempotent, resumable"]
-    files["data/raw/&lt;source&gt;/&lt;dataset&gt;/…<br/>payload.json.gz + .meta.json manifest"]
+    files["data/raw/&lt;source&gt;/&lt;dataset&gt;/…<br/>REST json.gz · flat-file csv.gz · .meta.json manifests"]
     fetches[("raw.fetches — index of manifests<br/>rebuild anytime: npm run raw:reindex")]
   end
 
-  subgraph FACTS["2 · facts — organized, deterministic — npm run facts:build"]
+  subgraph FACTS["2 · facts — organized, deterministic — npm run facts:build / facts:minute"]
     identity[("instruments · symbols · identifiers<br/>ticker = time-ranged label, FIGI = identity")]
     marketdata[("bars_daily as traded · corporate_actions<br/>instrument_events")]
+    minutebars[("bars_minute — parse-only parquet/day<br/>identity joined at QUERY time")]
     calendar[("exchanges · trading_days")]
   end
 
   subgraph COMPUTED["3 · computed — algorithms over facts, no build step"]
     factorviews[["views: canonical_bars_daily<br/>adjustment_factor_events · unadjustable_dividends"]]
-    macro[["macros: adjusted_bars(policy, as_of)<br/>adjusted_bars_for(instrument, policy, as_of)"]]
+    macro[["macros: adjusted_bars[_minute](policy, as_of)<br/>+ _for(instrument, …) variants"]]
     cache[("bars_daily_adjusted_cache<br/>optional snapshot: npm run computed:cache")]
   end
 
@@ -360,8 +361,45 @@ adjustment computation. Rows that cannot be resolved to an instrument go to
 quarantine catches exchange test tickers like ZTEST/NTEST.* and
 out-of-universe dividend payers like mutual funds).
 
-Intraday bars (minute) come in a later milestone: same identity rules, stored
-as partitioned parquet under `data/` with a DuckDB view, not as DB rows.
+## facts — minute bars (intraday)
+
+Raw truth is the vendor's flat file: one csv.gz per trading day covering the
+whole market's minute aggregates (04:00–20:00 ET), landed **byte-identical**
+under `raw/polygon/minute_aggs/date=…/` (~30 MB/day; the manifest hashes the
+artifact exactly as received — `storeVerbatim`).
+
+Facts materialize a **parse-only parquet** per day under
+`<ATM3_DATA_DIR>/facts/bars_minute/date=…/`: typed columns and nothing else
+(market_date, symbol, window_start_utc, OHLC, volume, transactions —
+epoch-nanosecond timestamps floor-divided as integers so minute boundaries
+stay exact). Each day is row-count-verified against its raw file before
+acceptance, and is rebuildable from raw at any time. Files under `facts/`
+are derived, unlike `raw/`.
+
+Identity is attached at QUERY time, never baked into files:
+
+| function | kind | computes |
+|---|---|---|
+| `facts.bars_minute_parsed` | view | the parquet glob, parse only |
+| `facts.bars_minute` | view | + `instrument_id` via symbol validity at `market_date` |
+| `facts.bars_minute_unresolved` | view | quarantine: minute rows resolving to no instrument |
+| `computed.adjusted_bars_minute(policy, as_of := null)` | table macro | adjusted minutes — day-grained factors, same anchor rule |
+| `computed.adjusted_bars_minute_for(instrument, policy, as_of := null)` | table macro | single-instrument variant |
+
+Because identity is a query-time join, symbol-history refinements
+retroactively apply to ALL minute history with zero rebuilds. A zero-row
+`_sentinel` parquet is auto-created at database open so the views always
+bind, even before any minute data exists.
+
+Cross-source doctrine (learned 2026-07-09 via `npm run verify:intraday`):
+**daily bars are authoritative for official OHLC; minute bars are
+authoritative for intraday paths.** Intraday aggregation excludes
+condition-coded prints, so `sum(minute volume) <= daily volume` is a hard
+invariant (zero violations across 35,642 instrument-days); the closing
+auction prints as the OPEN of the 16:00 ET minute where an auction exists;
+micro-caps' official closes are often absent from the minute tape entirely.
+The verify script enforces the invariant and monitors segmented
+close-agreement baselines for drift.
 
 ## computed — algorithms over facts
 

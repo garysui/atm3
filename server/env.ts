@@ -10,7 +10,13 @@ const envSchema = z.object({
   ATM3_API_PORT: z.coerce.number().int().positive().default(5180),
   ATM3_BACKFILL_FROM: z.string().optional(),
   ATM3_BACKFILL_TO: z.string().optional(),
+  // Intraday flat files can use a shorter window than the daily backfill
+  // (they are ~30 MB/day); defaults to ATM3_BACKFILL_FROM when unset.
+  ATM3_INTRADAY_BACKFILL_FROM: z.string().optional(),
   POLYGON_API_KEY: z.string().optional(),
+  // Polygon/Massive flat files use S3-compatible credentials (an AWS CLI
+  // profile), NOT the REST key.
+  ATM3_POLYGON_FLATFILES_AWS_PROFILE: z.string().default('massive-flatfiles'),
 })
 
 const parsed = envSchema.parse(process.env)

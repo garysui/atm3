@@ -2,7 +2,9 @@ import type { Atm3Db } from './db.ts'
 import { logger } from './log.ts'
 import { withRun } from './runs.ts'
 import { buildAllFacts } from './facts-build.ts'
+import { buildMinuteParquet } from './facts-minute.ts'
 import { refreshAdjustedBarsCache } from './computed-build.ts'
+import { ingestMinuteAggs, intradayBackfillWindow } from './flatfiles.ts'
 import {
   backfillWindow,
   ingestDividends,
@@ -95,11 +97,30 @@ export const dailyReplenishSteps: OperationStep[] = [
     },
   },
   {
+    id: 'ingest:polygon:minute_aggs',
+    label: 'minute flat files',
+    stage: 'raw',
+    description:
+      'whole-market minute bars, one vendor csv.gz per missing day (S3)',
+    run: ({ db, runId }) => {
+      const { from, to } = intradayBackfillWindow()
+      return ingestMinuteAggs(db, { runId, from, to })
+    },
+  },
+  {
     id: 'build:facts',
     label: 'build facts',
     stage: 'facts',
     description: 'identity, calendars, corporate actions, bars — full refresh from raw',
     run: ({ db }) => buildAllFacts(db.connection),
+  },
+  {
+    id: 'build:facts:minute',
+    label: 'build minute facts',
+    stage: 'facts',
+    description:
+      'parse-only parquet per day from raw flat files, row-count verified',
+    run: ({ db }) => buildMinuteParquet(db.connection),
   },
   {
     id: 'computed:cache',

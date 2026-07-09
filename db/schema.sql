@@ -236,6 +236,60 @@ create table if not exists facts.bars_daily (
   primary key (source_id, instrument_id, market_date, symbol_as_traded)
 );
 
+-- Minute bars. Raw truth is the vendor's csv.gz flat file per trading day;
+-- facts materialize a PARSE-ONLY parquet per day under
+-- __ATM3_DATA_DIR__/facts/bars_minute/ (typed columns, nothing interpreted
+-- beyond parsing; derived and rebuildable from raw). Identity attaches HERE,
+-- at query time — never baked into files — so symbol-history refinements
+-- retroactively apply to all minute history with zero rebuilds. The
+-- _sentinel parquet (zero rows) is auto-created so the glob always binds.
+create or replace view facts.bars_minute_parsed as
+select market_date, symbol, window_start_utc,
+       open, high, low, close, volume, transactions
+from read_parquet('__ATM3_DATA_DIR__/facts/bars_minute/*/*.parquet')
+where market_date is not null;
+
+create or replace view facts.bars_minute as
+with usage_resolution as (
+  select d.market_date, d.symbol, s.instrument_id
+  from (
+    select distinct market_date, symbol from facts.bars_minute_parsed
+  ) d
+  join facts.symbols s
+    on s.market_scope = 'us_stocks'
+   and s.symbol = d.symbol
+   and (s.valid_from is null or d.market_date >= s.valid_from)
+   and (s.valid_to is null or d.market_date < s.valid_to)
+  qualify row_number() over (
+    partition by d.symbol, d.market_date
+    order by s.valid_from desc nulls last
+  ) = 1
+)
+select r.instrument_id, p.market_date, p.symbol as symbol_as_traded,
+       p.window_start_utc, p.open, p.high, p.low, p.close, p.volume,
+       p.transactions
+from facts.bars_minute_parsed p
+join usage_resolution r
+  on r.symbol = p.symbol and r.market_date = p.market_date;
+
+-- Quarantine as a function: minute rows whose symbol resolves to no
+-- instrument on that date (exchange test tickers, out-of-universe lines).
+create or replace view facts.bars_minute_unresolved as
+select p.symbol, p.market_date, count(*) as bars
+from facts.bars_minute_parsed p
+anti join (
+  select d.market_date, d.symbol
+  from (
+    select distinct market_date, symbol from facts.bars_minute_parsed
+  ) d
+  join facts.symbols s
+    on s.market_scope = 'us_stocks'
+   and s.symbol = d.symbol
+   and (s.valid_from is null or d.market_date >= s.valid_from)
+   and (s.valid_to is null or d.market_date < s.valid_to)
+) r on r.symbol = p.symbol and r.market_date = p.market_date
+group by p.symbol, p.market_date;
+
 -- computed ---------------------------------------------------------------
 -- The computed layer is ALGORITHMS over facts: views and table macros,
 -- computed at query time. Adjusted data is a view of the facts at a point
@@ -439,6 +493,118 @@ select
   b.close * coalesce(c.cum_pf, 1) as close,
   b.volume * coalesce(c.cum_vf, 1) as volume,
   b.vwap * coalesce(c.cum_pf, 1) as vwap,
+  coalesce(c.cum_pf, 1) as cum_price_factor,
+  coalesce(c.cum_vf, 1) as cum_volume_factor,
+  b.symbol_as_traded
+from bars b
+left join cum c
+  on b.market_date < c.event_date
+  and (c.prev_event_date is null or b.market_date >= c.prev_event_date);
+
+-- Minute-level adjusted bars: the SAME per-event factors, day-grained — all
+-- minutes of a trading day share that day's cumulative factor. Policies and
+-- the series-anchor rule match computed.adjusted_bars.
+create or replace macro computed.adjusted_bars_minute(policy, as_of := null) as table
+with bars as (
+  select * from facts.bars_minute
+  where as_of is null or market_date <= as_of
+),
+last_bar as (
+  select instrument_id, max(market_date) as last_bar_date
+  from bars
+  group by instrument_id
+),
+f as (
+  select af.instrument_id, af.event_date,
+         product(af.price_factor) as pf,
+         product(af.volume_factor) as vf
+  from computed.adjustment_factor_events af
+  join last_bar lb
+    on lb.instrument_id = af.instrument_id
+   and af.event_date <= lb.last_bar_date
+  where (af.action_type = 'split'
+           and policy in ('split', 'split_dividend'))
+     or (af.action_type = 'cash_dividend'
+           and policy = 'split_dividend')
+  group by af.instrument_id, af.event_date
+),
+cum as (
+  select
+    instrument_id,
+    event_date,
+    lag(event_date) over (
+      partition by instrument_id order by event_date
+    ) as prev_event_date,
+    product(pf) over (
+      partition by instrument_id order by event_date desc
+    ) as cum_pf,
+    product(vf) over (
+      partition by instrument_id order by event_date desc
+    ) as cum_vf
+  from f
+)
+select
+  b.instrument_id,
+  b.market_date,
+  b.window_start_utc,
+  policy as adjustment_policy,
+  b.open * coalesce(c.cum_pf, 1) as open,
+  b.high * coalesce(c.cum_pf, 1) as high,
+  b.low * coalesce(c.cum_pf, 1) as low,
+  b.close * coalesce(c.cum_pf, 1) as close,
+  b.volume * coalesce(c.cum_vf, 1) as volume,
+  b.transactions,
+  coalesce(c.cum_pf, 1) as cum_price_factor,
+  coalesce(c.cum_vf, 1) as cum_volume_factor,
+  b.symbol_as_traded
+from bars b
+left join cum c
+  on c.instrument_id = b.instrument_id
+  and b.market_date < c.event_date
+  and (c.prev_event_date is null or b.market_date >= c.prev_event_date);
+
+-- Single-instrument variant with filters inside every stage.
+create or replace macro computed.adjusted_bars_minute_for(instrument, policy, as_of := null) as table
+with bars as (
+  select * from facts.bars_minute
+  where instrument_id = instrument
+    and (as_of is null or market_date <= as_of)
+),
+last_bar as (
+  select max(market_date) as last_bar_date from bars
+),
+f as (
+  select af.event_date,
+         product(af.price_factor) as pf,
+         product(af.volume_factor) as vf
+  from computed.adjustment_factor_events af, last_bar lb
+  where af.instrument_id = instrument
+    and af.event_date <= lb.last_bar_date
+    and ((af.action_type = 'split'
+            and policy in ('split', 'split_dividend'))
+      or (af.action_type = 'cash_dividend'
+            and policy = 'split_dividend'))
+  group by af.event_date
+),
+cum as (
+  select
+    event_date,
+    lag(event_date) over (order by event_date) as prev_event_date,
+    product(pf) over (order by event_date desc) as cum_pf,
+    product(vf) over (order by event_date desc) as cum_vf
+  from f
+)
+select
+  b.instrument_id,
+  b.market_date,
+  b.window_start_utc,
+  policy as adjustment_policy,
+  b.open * coalesce(c.cum_pf, 1) as open,
+  b.high * coalesce(c.cum_pf, 1) as high,
+  b.low * coalesce(c.cum_pf, 1) as low,
+  b.close * coalesce(c.cum_pf, 1) as close,
+  b.volume * coalesce(c.cum_vf, 1) as volume,
+  b.transactions,
   coalesce(c.cum_pf, 1) as cum_price_factor,
   coalesce(c.cum_vf, 1) as cum_volume_factor,
   b.symbol_as_traded

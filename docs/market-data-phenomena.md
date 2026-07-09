@@ -140,6 +140,28 @@ Renames often leave the old reference row inactive with no `delisted_utc`
 prior user; atm3 ends such usages at the row's `last_updated_utc` as the
 best evidence of end-of-usage.
 
+## 13. One market, two vendor tapes that disagree — by design
+
+Daily bars and minute flat files are different vendor products with
+different aggregation rules. Verified across 35,642 instrument-days
+(2026-07-06…08):
+
+- Intraday aggregation excludes condition-coded prints (blocks, late
+  reports), so summed minute volume is a SUBSET of daily volume — median
+  ~91%, sometimes 45–75% (NVDA, T, CLVT on 2026-07-06). The inequality
+  `sum(minute) <= daily` is a hard invariant: zero violations observed.
+- The closing auction prints FIRST inside the 16:00 ET minute: that bar's
+  OPEN is the official close, while the bar's close drifts on a few late
+  shares (CAT 2026-07-07: the 16:00 bar opened 940.12 — exactly the daily
+  close — then "closed" at 929.573 on 8k shares).
+- Micro-caps often have no auction print on the minute tape at all; their
+  official daily close cannot be derived from minutes (LGCL, DVLT, COSM…).
+
+Doctrine: **daily bars are authoritative for official OHLC; minute bars for
+intraday paths.** Never derive one from the other. `npm run verify:intraday`
+enforces the volume invariant and monitors close-agreement baselines by
+segment.
+
 ## The general lesson
 
 Every phenomenon above is a reason adjusted/normalized data cannot be the

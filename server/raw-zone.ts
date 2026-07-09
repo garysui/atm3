@@ -44,12 +44,17 @@ export type LandRawFileOptions = {
   relativeFilePath: string
   payload: Uint8Array
   rowCount?: number | null
+  // The vendor artifact is already a compressed file (flat files): store and
+  // hash the bytes exactly as received, never re-encode.
+  storeVerbatim?: boolean
 }
 
 // Write one verbatim payload file plus its manifest (temp file + rename so a
 // crash never leaves a half-written file), then index it in raw.fetches.
-// Payload bytes are stored exactly as received; paths ending in .gz are
-// gzipped on disk, and content_sha256 is always over the uncompressed bytes.
+// Payload bytes are stored exactly as received. For REST responses, paths
+// ending in .gz are gzipped by us and content_sha256 covers the uncompressed
+// payload; with storeVerbatim (vendor flat files) the artifact is written and
+// hashed byte-identical.
 export async function landRawFile(
   options: LandRawFileOptions,
 ): Promise<FetchManifest> {
@@ -64,9 +69,10 @@ export async function landRawFile(
   const absolutePath = path.join(dataDir, options.relativeFilePath)
   await mkdir(path.dirname(absolutePath), { recursive: true })
 
-  const stored = options.relativeFilePath.endsWith('.gz')
-    ? gzipSync(options.payload)
-    : options.payload
+  const stored =
+    !options.storeVerbatim && options.relativeFilePath.endsWith('.gz')
+      ? gzipSync(options.payload)
+      : options.payload
   await writeFile(`${absolutePath}.tmp`, stored)
   await rename(`${absolutePath}.tmp`, absolutePath)
 
