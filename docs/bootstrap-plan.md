@@ -134,6 +134,33 @@ level.
 3. Indices: not hooked up yet; SPY is the market proxy for now. `index_aggs`
    ingestion deferred.
 
+## Research-phase contract (owner-confirmed, 2026-07-08)
+
+Locked before any strategy/backtest code exists:
+
+1. **Raw grows append-only, forever.** New data (each day's bars, new
+   reference/action snapshots, vendor corrections as new statements) only
+   ADDS files; nothing prior is ever altered. Facts rebuild deterministically
+   from the accumulated raw, so every as-of-T view function keeps working
+   unchanged as data arrives. From a blank database the system repopulates
+   from the raw archive with zero network (proven); from a truly blank state
+   it re-fetches the window from the vendor (bounded by what the vendor
+   still serves — one more reason the raw archive is the asset).
+2. **Research runs on slices of the one market universe**, expressed as
+   filters/functions over facts (market_scope, exchange, instrument_type /
+   security_form / is_clean_common_stock, liquidity) — never as separate
+   datasets or databases. Test tickers never resolve to instruments, so
+   instrument-based universes exclude them by construction.
+3. **At test date T, truth is the tape.** Selection predicates evaluate on
+   REAL as-traded prices (`facts.bars_daily`, equivalently policy `none`) —
+   "price > 10" means the tape printed > 10 on that date, never a value
+   rescaled by adjustments anchored elsewhere. Historical context uses
+   as-of-T anchored views (`computed.adjusted_bars(policy, as_of := T)`),
+   which cannot see past T. Forward gains over (T, T+h] are computed from
+   raw bars plus the corporate actions inside the window (dividends
+   received, split share scaling) — the forward-return function is built on
+   these primitives in the research phase.
+
 ## Open questions for the owner
 
 1. Any desire to bring CN/Tushare in earlier than "after M4"?
