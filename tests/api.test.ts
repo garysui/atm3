@@ -41,6 +41,7 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
 
   const server = await createApiServer({
     dbPath,
+    dataDir: dir,
     operationSteps: [
       {
         id: 'op:test',
@@ -118,6 +119,25 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     const asOf = await barsFor('policy=split_dividend&as_of=2025-01-02')
     assert.equal(asOf.bars.length, 1)
     assert.equal(asOf.bars[0]?.close, 100)
+
+    // Intraday endpoints: empty coverage answers cleanly (no minute data in
+    // this fixture); bad dates are rejected.
+    const minuteDays = (await (
+      await fetch(`${base}/api/instruments/${A}/minute-days`)
+    ).json()) as { days: unknown[] }
+    assert.deepEqual(minuteDays.days, [])
+    const minuteBars = (await (
+      await fetch(
+        `${base}/api/instruments/${A}/minute-bars?date=2025-01-02&policy=split`,
+      )
+    ).json()) as { bars: unknown[]; date: string }
+    assert.deepEqual(minuteBars.bars, [])
+    assert.equal(minuteBars.date, '2025-01-02')
+    assert.equal(
+      (await fetch(`${base}/api/instruments/${A}/minute-bars?date=nope`))
+        .status,
+      400,
+    )
 
     // Macro-minted ids must pass API validation (regression: z.uuid()
     // rejected non-RFC hash ids and 400'd most real instruments).

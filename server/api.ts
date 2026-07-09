@@ -55,6 +55,12 @@ const barsQuerySchema = z.object({
   as_of: z.iso.date().optional(),
 })
 
+const minuteBarsQuerySchema = z.object({
+  policy: z.enum(adjustmentPolicies).default('split_dividend'),
+  date: z.iso.date(),
+  as_of: z.iso.date().optional(),
+})
+
 const limitQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
 })
@@ -69,9 +75,16 @@ const docsDir = fileURLToPath(new URL('../docs', import.meta.url))
 const docNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
 export async function createApiServer(
-  options: { dbPath?: string; operationSteps?: OperationStep[] } = {},
+  options: {
+    dbPath?: string
+    dataDir?: string
+    operationSteps?: OperationStep[]
+  } = {},
 ): Promise<ApiServer> {
-  const db = await openDatabase({ dbPath: options.dbPath })
+  const db = await openDatabase({
+    dbPath: options.dbPath,
+    dataDir: options.dataDir,
+  })
   // db.connection is reserved as the WRITER (operations queue); queries run
   // on sibling reader connections of the same instance.
   const readers: DuckDBConnection[] = []
@@ -266,6 +279,71 @@ export async function createApiServer(
       ),
     )
     response.json({ policy: query.policy, asOf: query.as_of ?? null, bars: rows })
+  })
+
+  // Intraday coverage for one instrument: one summary row per day with
+  // minute data (recent first).
+  app.get('/api/instruments/:id/minute-days', async (request, response) => {
+    const instrumentId = instrumentIdSchema.parse(request.params.id)
+    const rows = await pool.run((connection) =>
+      readRows(
+        connection,
+        `
+          select
+            cast(market_date as varchar) as date,
+            count(*) as bars,
+            strftime(min(window_start_utc) at time zone 'America/New_York',
+                     '%H:%M') as first_et,
+            strftime(max(window_start_utc) at time zone 'America/New_York',
+                     '%H:%M') as last_et,
+            round(min(low), 4) as low,
+            round(max(high), 4) as high,
+            cast(sum(volume) as bigint) as volume
+          from facts.bars_minute
+          where instrument_id = cast($id as uuid)
+          group by market_date
+          order by market_date desc
+          limit 30
+        `,
+        { id: instrumentId },
+      ),
+    )
+    response.json({ days: rows })
+  })
+
+  // Minute drill-down for one instrument-day, through the same adjustment
+  // policies as the daily chart. Times are epoch seconds (UTC).
+  app.get('/api/instruments/:id/minute-bars', async (request, response) => {
+    const instrumentId = instrumentIdSchema.parse(request.params.id)
+    const query = minuteBarsQuerySchema.parse(request.query)
+    const rows = await pool.run((connection) =>
+      readRows(
+        connection,
+        `
+          select
+            cast(epoch(window_start_utc) as bigint) as time,
+            open, high, low, close, volume,
+            cum_price_factor, symbol_as_traded
+          from computed.adjusted_bars_minute_for(
+            cast($id as uuid), $policy, as_of := cast($as_of as date)
+          )
+          where market_date = cast($date as date)
+          order by window_start_utc
+        `,
+        {
+          id: instrumentId,
+          policy: query.policy,
+          date: query.date,
+          as_of: query.as_of ?? null,
+        },
+      ),
+    )
+    response.json({
+      policy: query.policy,
+      date: query.date,
+      asOf: query.as_of ?? null,
+      bars: rows,
+    })
   })
 
   // Project docs served into the UI — the tool documents its own gotchas

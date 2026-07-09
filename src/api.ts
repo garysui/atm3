@@ -38,6 +38,25 @@ export type BarsResponse = {
   bars: Bar[]
 }
 
+export type MinuteBar = {
+  // Epoch seconds UTC (may arrive as a string for BIGINT columns).
+  time: number | string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
+  cum_price_factor: number
+  symbol_as_traded: string
+}
+
+export type MinuteBarsResponse = {
+  policy: string
+  date: string
+  asOf: string | null
+  bars: MinuteBar[]
+}
+
 // Retries transient failures: the dev API takes a few seconds to open the
 // database (and tsx watch restarts it), during which the proxy returns
 // 502/ECONNREFUSED.

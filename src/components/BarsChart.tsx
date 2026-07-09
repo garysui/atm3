@@ -9,7 +9,16 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { useEffect, useRef } from 'react'
-import type { Bar } from '../api.ts'
+
+// Daily bars use 'YYYY-MM-DD' dates; minute bars use epoch seconds (UTC) —
+// both are valid lightweight-charts Time values.
+export type ChartBar = {
+  date: string | number
+  open: number
+  high: number
+  low: number
+  close: number
+}
 
 export type ChartEvent = {
   date: string
@@ -26,8 +35,10 @@ type ChartHandle = {
 
 // Corporate-action markers snap to the first bar on/after their ex date so
 // they always land on the time scale.
-function toMarkers(events: ChartEvent[], bars: Bar[]): SeriesMarker<Time>[] {
-  if (bars.length === 0) {
+function toMarkers(events: ChartEvent[], bars: ChartBar[]): SeriesMarker<Time>[] {
+  // Markers carry day-grained dates — only meaningful on daily (string-dated)
+  // charts; minute charts pass no events.
+  if (bars.length === 0 || typeof bars[0].date !== 'string') {
     return []
   }
 
@@ -79,7 +90,7 @@ export function BarsChart({
   events,
   resetKey,
 }: {
-  bars: Bar[]
+  bars: ChartBar[]
   events: ChartEvent[]
   resetKey: string
 }) {

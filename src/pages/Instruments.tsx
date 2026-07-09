@@ -3,6 +3,7 @@ import {
   getJson,
   type BarsResponse,
   type InstrumentDetail,
+  type MinuteBarsResponse,
   type Row,
 } from '../api.ts'
 import { BarsChart, type ChartEvent } from '../components/BarsChart.tsx'
@@ -19,6 +20,9 @@ export function Instruments({
 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Row[] | null>(null)
+  // Picking an instrument collapses the result list to one line so the
+  // detail starts right under the search box.
+  const [resultsOpen, setResultsOpen] = useState(true)
   const [policy, setPolicy] = useState<(typeof policies)[number]>('split_dividend')
   const [asOf, setAsOf] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -33,8 +37,26 @@ export function Instruments({
     key: string
     data: BarsResponse
   } | null>(null)
+  const [minuteDaysState, setMinuteDaysState] = useState<{
+    id: string
+    days: Row[]
+  } | null>(null)
+  const [minuteDaySelection, setMinuteDaySelection] = useState<{
+    id: string
+    date: string
+  } | null>(null)
+  const [minuteBarsState, setMinuteBarsState] = useState<{
+    key: string
+    data: MinuteBarsResponse
+  } | null>(null)
 
   const barsKey = instrumentId ? `${instrumentId}|${policy}|${asOf}` : null
+  const minuteDay =
+    minuteDaySelection?.id === instrumentId ? minuteDaySelection.date : null
+  const minuteBarsKey =
+    instrumentId && minuteDay
+      ? `${instrumentId}|${minuteDay}|${policy}|${asOf}`
+      : null
 
   const search = async (event?: { preventDefault(): void }) => {
     event?.preventDefault()
@@ -49,6 +71,7 @@ export function Instruments({
           `/api/instruments?scope=${encodeURIComponent(scope)}&q=${encodeURIComponent(query.trim())}`,
         ),
       )
+      setResultsOpen(true)
       setError(null)
     } catch (cause) {
       setError((cause as Error).message)
@@ -102,9 +125,63 @@ export function Instruments({
     }
   }, [instrumentId, barsKey, policy, asOf])
 
+  useEffect(() => {
+    if (!instrumentId) {
+      return
+    }
+
+    let cancelled = false
+    getJson<{ days: Row[] }>(`/api/instruments/${instrumentId}/minute-days`)
+      .then((data) => {
+        if (!cancelled) {
+          setMinuteDaysState({ id: instrumentId, days: data.days })
+        }
+      })
+      .catch((cause: Error) => {
+        if (!cancelled) setError(cause.message)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [instrumentId])
+
+  useEffect(() => {
+    if (!instrumentId || !minuteDay || !minuteBarsKey) {
+      return
+    }
+
+    let cancelled = false
+    const asOfParam = asOf ? `&as_of=${asOf}` : ''
+    getJson<MinuteBarsResponse>(
+      `/api/instruments/${instrumentId}/minute-bars?date=${minuteDay}&policy=${policy}${asOfParam}`,
+    )
+      .then((data) => {
+        if (!cancelled) {
+          setMinuteBarsState({ key: minuteBarsKey, data })
+          setError(null)
+        }
+      })
+      .catch((cause: Error) => {
+        if (!cancelled) setError(cause.message)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [instrumentId, minuteDay, minuteBarsKey, policy, asOf])
+
   const detail =
     instrumentId && detailState?.id === instrumentId ? detailState.data : null
   const bars = barsKey && barsState?.key === barsKey ? barsState.data : null
+  const minuteDays =
+    instrumentId && minuteDaysState?.id === instrumentId
+      ? minuteDaysState.days
+      : null
+  const minuteBars =
+    minuteBarsKey && minuteBarsState?.key === minuteBarsKey
+      ? minuteBarsState.data
+      : null
   const instrument = detail?.instrument
 
   // Corporate actions as chart markers: splits above the bar, dividends
@@ -143,14 +220,22 @@ export function Instruments({
         <button type="submit">Search {scope}</button>
       </form>
       {error && <p className="error">{error}</p>}
-      {results && (
-        <DataTable
-          rows={results}
-          onRowClick={(row) => {
-            window.location.hash = `#instruments/${row.instrument_id}`
-          }}
-        />
-      )}
+      {results &&
+        (resultsOpen ? (
+          <DataTable
+            rows={results}
+            onRowClick={(row) => {
+              window.location.hash = `#instruments/${row.instrument_id}`
+              setResultsOpen(false)
+            }}
+          />
+        ) : (
+          <p className="muted">
+            <button onClick={() => setResultsOpen(true)}>
+              show {results.length} search result(s)
+            </button>
+          </p>
+        ))}
 
       {instrumentId && !instrument && !error && <p className="muted">loading…</p>}
 
@@ -215,6 +300,57 @@ export function Instruments({
             resetKey={`${instrumentId}|${asOf}`}
           />
           {!bars && <p className="muted">loading bars…</p>}
+
+          <h3>Intraday (minute bars)</h3>
+          {!minuteDays && <p className="muted">loading…</p>}
+          {minuteDays && minuteDays.length === 0 && (
+            <p className="muted">
+              no minute data for this instrument in the ingested window yet
+            </p>
+          )}
+          {minuteDays && minuteDays.length > 0 && (
+            <div>
+              <p className="muted">
+                {minuteDays.length} day(s) ·{' '}
+                {String(minuteDays[minuteDays.length - 1]?.date)} →{' '}
+                {String(minuteDays[0]?.date)} · click a day to chart its
+                minutes
+              </p>
+              <DataTable
+                rows={minuteDays}
+                onRowClick={(row) =>
+                  setMinuteDaySelection({
+                    id: instrumentId as string,
+                    date: String(row.date),
+                  })
+                }
+              />
+              {minuteDay && (
+                <div>
+                  <p className="muted">
+                    {minuteDay} · policy {policy}
+                    {minuteBars
+                      ? ` · ${minuteBars.bars.length} minute bars` +
+                        (minuteBars.bars[0]
+                          ? ` · factor ×${Number(minuteBars.bars[0].cum_price_factor).toFixed(6)}`
+                          : '')
+                      : ' · loading…'}
+                  </p>
+                  <BarsChart
+                    bars={(minuteBars?.bars ?? []).map((bar) => ({
+                      date: Number(bar.time),
+                      open: Number(bar.open),
+                      high: Number(bar.high),
+                      low: Number(bar.low),
+                      close: Number(bar.close),
+                    }))}
+                    events={[]}
+                    resetKey={`${instrumentId}|${minuteDay}|${asOf}`}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {detail && (
             <div>
