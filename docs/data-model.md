@@ -7,34 +7,64 @@ atm3 starts from scratch: no data is migrated from atm2 or any prior system.
 All data enters through raw vendor ingestion, and the database file is a
 disposable index over `data/raw/`.
 
-## Layers
+## The pipeline, end to end
 
 ```mermaid
-flowchart LR
-  V["Vendors\nPolygon / SEC / CBOE / Tushare"] -->|fetch verbatim| RAW
-  subgraph RAW["raw — untouched truth"]
-    files["data/raw/&lt;source&gt;/&lt;dataset&gt;/... files"]
-    catalog["raw.fetches catalog"]
-    views["raw.v_* parse views (no copy)"]
-    files --- catalog
-    files --> views
+flowchart TD
+  vendor(["Polygon.io"])
+
+  subgraph RAW["1 · raw — untouched truth, append-only files"]
+    ingest["npm run ingest:polygon:*<br/>idempotent, resumable"]
+    files["data/raw/&lt;source&gt;/&lt;dataset&gt;/…<br/>payload.json.gz + .meta.json manifest"]
+    fetches[("raw.fetches — index of manifests<br/>rebuild anytime: npm run raw:reindex")]
   end
-  subgraph FACTS["facts — organized facts (rebuildable from raw)"]
-    identity["instruments / symbols / identifiers"]
-    actions["corporate_actions / events"]
-    bars["bars_daily (unadjusted)"]
-    cal["exchanges / trading_days"]
+
+  subgraph FACTS["2 · facts — organized, deterministic — npm run facts:build"]
+    identity[("instruments · symbols · identifiers<br/>ticker = time-ranged label, FIGI = identity")]
+    marketdata[("bars_daily as traded · corporate_actions<br/>instrument_events")]
+    calendar[("exchanges · trading_days")]
   end
-  subgraph COMPUTED["computed — pure functions of facts + time T (droppable cache)"]
-    adj["adjustment_factors"]
-    adjbars["bars_daily_adjusted (policy)"]
-    metrics["metrics / universes (later)"]
+
+  subgraph COMPUTED["3 · computed — algorithms over facts, no build step"]
+    factorviews[["views: canonical_bars_daily<br/>adjustment_factor_events · unadjustable_dividends"]]
+    macro[["macros: adjusted_bars(policy, as_of)<br/>adjusted_bars_for(instrument, policy, as_of)"]]
+    cache[("bars_daily_adjusted_cache<br/>optional snapshot: npm run computed:cache")]
   end
-  views -->|deterministic builders| FACTS
-  FACTS -->|named, versioned computations| COMPUTED
-  OPS["ops — runs / cursors / quarantine"] -.-> RAW
-  OPS -.-> FACTS
+
+  subgraph SURFACE["4 · surfaces — read-only"]
+    api["API /api/*"]
+    web["UI: Data Center · Instruments · Docs"]
+    clitools["npm run status · npm run sql"]
+  end
+
+  subgraph OPS["ops — bookkeeping, never market truth"]
+    runs[("runs — every job's history")]
+    sync[("sync_state — resume cursors")]
+    unresolved[("unresolved — quarantine,<br/>never guessed")]
+  end
+
+  vendor -->|verbatim bytes| ingest
+  ingest --> files
+  files --> fetches
+  files -->|read_json, parsed in place| FACTS
+  fetches -->|market-closure evidence| calendar
+  identity --> factorviews
+  marketdata --> factorviews
+  factorviews --> macro
+  macro -->|materialize + verify equal| cache
+  macro --> api
+  api --> web
+  clitools -.-> fetches
+  ingest -.-> runs
+  ingest -.-> sync
+  FACTS -.->|unresolvable rows| unresolved
 ```
+
+Reading the shapes: **cylinders** are database tables, **double-bordered
+boxes** are functions (views/table macros), plain boxes are code/surfaces,
+**dashed lines** are bookkeeping. Everything left of the surfaces is
+reproducible: delete the database file and steps 1–3 rebuild it from the
+files on disk.
 
 Layer rules:
 

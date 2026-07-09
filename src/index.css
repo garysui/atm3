@@ -159,3 +159,13 @@ form {
 .doc table {
   margin: 6px 0;
 }
+
+.diagram {
+  margin: 10px 0 16px;
+  overflow-x: auto;
+}
+
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+}

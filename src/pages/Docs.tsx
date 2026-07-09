@@ -1,8 +1,36 @@
 import { marked } from 'marked'
-import { useEffect, useMemo, useState } from 'react'
+import mermaid from 'mermaid'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getJson } from '../api.ts'
 
 type DocEntry = { name: string; title: string }
+
+mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
+
+// marked leaves ```mermaid blocks as <pre><code class="language-mermaid">;
+// render each into an SVG in place. A diagram that fails to parse keeps its
+// code block with the error shown, never a blank hole.
+async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
+  const blocks = [...container.querySelectorAll('code.language-mermaid')]
+
+  for (const [index, block] of blocks.entries()) {
+    const source = block.textContent ?? ''
+    const host = block.closest('pre') ?? block
+
+    try {
+      const { svg } = await mermaid.render(`doc-diagram-${index}`, source)
+      const figure = document.createElement('div')
+      figure.className = 'diagram'
+      figure.innerHTML = svg
+      host.replaceWith(figure)
+    } catch (cause) {
+      const note = document.createElement('p')
+      note.className = 'error'
+      note.textContent = `diagram failed to render: ${(cause as Error).message}`
+      host.before(note)
+    }
+  }
+}
 
 // Project docs rendered in-app: the tool explains its own domain, starting
 // with docs/market-data-phenomena.md (renames, reuse, splits, quarantine…).
@@ -56,6 +84,15 @@ export function Docs({ docName }: { docName: string | null }) {
     () => (doc ? (marked.parse(doc.markdown) as string) : ''),
     [doc],
   )
+  const articleRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const article = articleRef.current
+
+    if (article && html) {
+      void renderMermaidBlocks(article)
+    }
+  }, [html])
 
   return (
     <div>
@@ -73,7 +110,11 @@ export function Docs({ docName }: { docName: string | null }) {
       {error && <p className="error">{error}</p>}
       {!doc && !error && <p className="muted">loading…</p>}
       {doc && (
-        <article className="doc" dangerouslySetInnerHTML={{ __html: html }} />
+        <article
+          ref={articleRef}
+          className="doc"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       )}
     </div>
   )
