@@ -6,6 +6,8 @@ const envSchema = z.object({
   ATM3_DATA_DIR: z.string().default('data'),
   ATM3_DUCKDB_PATH: z.string().optional(),
   ATM3_LOG_LEVEL: z.string().default('info'),
+  ATM3_API_HOST: z.string().default('127.0.0.1'),
+  ATM3_API_PORT: z.coerce.number().int().positive().default(5180),
   ATM3_BACKFILL_FROM: z.string().optional(),
   ATM3_BACKFILL_TO: z.string().optional(),
   POLYGON_API_KEY: z.string().optional(),

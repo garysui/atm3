@@ -77,9 +77,11 @@ writer or concurrent readers, so stop long-running jobs before querying.
 
 ## Status
 
-M0–M4 done: specs, skeleton, raw Polygon ingestion (2-year backfill), facts
-builders (identity, calendar, corporate actions, bars), and the computed layer
-(adjustment factors + policy-adjusted bars, 100% split-parity with the vendor
-on active instruments). Next: M5 minimal API/UI surface.
-Strategies/backtesting come after. See
-[docs/bootstrap-plan.md](docs/bootstrap-plan.md).
+M0–M5 done: specs, skeleton, raw Polygon ingestion (2-year backfill), facts
+builders (identity, calendar, corporate actions, bars), the computed layer
+(adjustment algorithms as views/macros, 100% split-parity with the vendor on
+active instruments), and the minimal surface — a read-only API plus a Data
+Center / Instruments UI (`npm run dev`, then http://localhost:5173) with
+policy/as-of bar charts computed live from facts. Next: research primitives
+(universe + forward-return functions) per the research-phase contract.
+See [docs/bootstrap-plan.md](docs/bootstrap-plan.md).

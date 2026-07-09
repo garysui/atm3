@@ -111,10 +111,25 @@ tickers.
 
 ## M5 — Minimal surface
 
+Status: done 2026-07-09.
+
 Small Express API + minimal Data Center UI: instrument search (scoped by
 market), symbol history, bar chart with adjustment-policy toggle, runs/fetches
 views. UI filters by market_scope — proving market selection lives at the UI
 level.
+
+Evidence: read-only Express API (`npm run serve`; opens the database with
+access_mode=READ_ONLY over a 3-connection read pool) serving health, scopes,
+status, instrument search/detail, policy/as-of bars straight from the
+`adjusted_bars_for` macro, runs, and quarantine. React UI (`npm run dev`,
+Vite proxy) with a Data Center page (all status tables) and an Instruments
+page (search → detail → symbol history incl. FB→META, identifiers, corporate
+actions, candlestick chart with `none`/`split`/`split_dividend` toggle and
+as-of date input — the algorithm-first thesis on screen). The market selector
+is fed by `select distinct market_scope` from the data. Verified in a live
+browser: META search → 501-bar chart, policy toggle re-computes from the
+macro, zero console errors. Note: the API holds a read lock — stop it before
+running write jobs (ingest/facts builds).
 
 ## Later (explicitly out of scope now)
 
