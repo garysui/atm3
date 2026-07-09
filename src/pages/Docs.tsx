@@ -1,6 +1,6 @@
 import { marked } from 'marked'
 import mermaid from 'mermaid'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getJson } from '../api.ts'
 
 type DocEntry = { name: string; title: string }
@@ -20,6 +20,13 @@ function rewriteDocLinks(container: HTMLElement): void {
       continue
     }
 
+    // Section anchors are not supported (marked emits no heading ids) and a
+    // raw #foo would hash-route to the wrong page — unwrap to plain text.
+    if (href.startsWith('#') && !href.startsWith('#docs/')) {
+      anchor.replaceWith(...anchor.childNodes)
+      continue
+    }
+
     const match = href.match(/^(?:\.\/)?(?:docs\/)?([a-z0-9-]+)\.md(?:#.*)?$/i)
 
     if (match) {
@@ -28,18 +35,32 @@ function rewriteDocLinks(container: HTMLElement): void {
   }
 }
 
+let diagramRenderSequence = 0
+
 // marked leaves ```mermaid blocks as <pre><code class="language-mermaid">;
 // render each into an SVG in place. A diagram that fails to parse keeps its
 // code block with the error shown, never a blank hole.
-async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
+async function renderMermaidBlocks(
+  container: HTMLElement,
+  isCancelled: () => boolean,
+): Promise<void> {
   const blocks = [...container.querySelectorAll('code.language-mermaid')]
 
-  for (const [index, block] of blocks.entries()) {
+  for (const block of blocks) {
+    // Doc switched mid-pass: stop wasting renders on an abandoned container.
+    // Ids are globally unique so overlapping passes can never collide.
+    if (isCancelled()) {
+      return
+    }
+
     const source = block.textContent ?? ''
     const host = block.closest('pre') ?? block
 
     try {
-      const { svg } = await mermaid.render(`doc-diagram-${index}`, source)
+      const { svg } = await mermaid.render(
+        `doc-diagram-${diagramRenderSequence++}`,
+        source,
+      )
       const figure = document.createElement('div')
       figure.className = 'diagram'
       figure.title = 'click to zoom'
@@ -210,20 +231,41 @@ export function Docs({ docName }: { docName: string | null }) {
   }, [selected])
 
   const doc = docState?.name === selected ? docState : null
-  const html = useMemo(
-    () => (doc ? (marked.parse(doc.markdown) as string) : ''),
-    [doc],
-  )
-  const articleRef = useRef<HTMLElement>(null)
+
+  // The full transform (markdown -> html -> link rewrite -> mermaid SVGs)
+  // happens in a DETACHED container and is committed through state in one
+  // shot. Never mutate React-rendered DOM after the fact: a later re-render
+  // (e.g. opening the lightbox) re-applies dangerouslySetInnerHTML and wipes
+  // any post-render mutations.
+  const [rendered, setRendered] = useState<{
+    forDoc: string
+    html: string
+  } | null>(null)
 
   useEffect(() => {
-    const article = articleRef.current
-
-    if (article && html) {
-      rewriteDocLinks(article)
-      void renderMermaidBlocks(article)
+    if (!doc) {
+      return
     }
-  }, [html])
+
+    let cancelled = false
+
+    void (async () => {
+      const container = document.createElement('div')
+      container.innerHTML = marked.parse(doc.markdown) as string
+      rewriteDocLinks(container)
+      await renderMermaidBlocks(container, () => cancelled)
+
+      if (!cancelled) {
+        setRendered({ forDoc: doc.name, html: container.innerHTML })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [doc])
+
+  const html = rendered?.forDoc === selected ? rendered.html : null
 
   return (
     <div>
@@ -239,10 +281,9 @@ export function Docs({ docName }: { docName: string | null }) {
         ))}
       </nav>
       {error && <p className="error">{error}</p>}
-      {!doc && !error && <p className="muted">loading…</p>}
-      {doc && (
+      {!html && !error && <p className="muted">loading…</p>}
+      {html && (
         <article
-          ref={articleRef}
           className="doc"
           onClick={(event) => {
             const figure = (event.target as HTMLElement).closest('.diagram')
