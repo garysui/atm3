@@ -10,7 +10,7 @@ server.app.listen(env.ATM3_API_PORT, env.ATM3_API_HOST, () => {
       host: env.ATM3_API_HOST,
       port: env.ATM3_API_PORT,
       dbPath: server.dbPath,
-      mode: 'read-only',
+      mode: 'read-write (single writer + read pool)',
     },
     'api listening',
   )

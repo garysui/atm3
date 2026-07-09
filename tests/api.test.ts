@@ -39,7 +39,18 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     }
   })()
 
-  const server = await createApiServer({ dbPath })
+  const server = await createApiServer({
+    dbPath,
+    operationSteps: [
+      {
+        id: 'op:test',
+        label: 'test op',
+        stage: 'raw',
+        description: 'stub operation for endpoint tests',
+        run: async () => ({ ok: true }),
+      },
+    ],
+  })
   const listener = server.app.listen(0)
   await new Promise((resolve) => listener.once('listening', resolve))
   const base = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`
@@ -142,6 +153,39 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     assert.equal((await fetch(`${base}/api/docs/no-such-doc`)).status, 404)
     assert.equal(
       (await fetch(`${base}/api/docs/..%2Fpackage`)).status, 400)
+
+    // Operations endpoints (stub step injected by this test).
+    const operations = (await (await fetch(`${base}/api/operations`)).json()) as {
+      steps: Array<{ id: string; live: { state: string }; lastRun: unknown }>
+    }
+    assert.equal(operations.steps.length, 1)
+    assert.equal(operations.steps[0]?.id, 'op:test')
+    assert.equal(operations.steps[0]?.live.state, 'idle')
+
+    const enqueue = await fetch(`${base}/api/operations/op:test/run`, {
+      method: 'POST',
+    })
+    assert.equal(((await enqueue.json()) as { queued: boolean }).queued, true)
+
+    for (let i = 0; i < 40; i++) {
+      const now = (await (await fetch(`${base}/api/operations`)).json()) as {
+        steps: Array<{ live: { state: string }; lastRun: { status?: string } | null }>
+      }
+
+      if (now.steps[0]?.live.state === 'ok') {
+        assert.equal(now.steps[0]?.lastRun?.status, 'ok')
+        break
+      }
+
+      assert.notEqual(now.steps[0]?.live.state, 'failed')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+
+    assert.equal(
+      (await fetch(`${base}/api/operations/nope/run`, { method: 'POST' }))
+        .status,
+      404,
+    )
   } finally {
     await new Promise((resolve) => listener.close(resolve))
     server.closeSync()

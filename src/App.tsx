@@ -3,9 +3,10 @@ import { getJson, type Row } from './api.ts'
 import { DataCenter } from './pages/DataCenter.tsx'
 import { Docs } from './pages/Docs.tsx'
 import { Instruments } from './pages/Instruments.tsx'
+import { Pipeline } from './pages/Pipeline.tsx'
 
 type Route = {
-  page: 'data' | 'instruments' | 'docs'
+  page: 'data' | 'instruments' | 'docs' | 'pipeline'
   instrumentId: string | null
   docName: string | null
 }
@@ -20,6 +21,10 @@ function parseRoute(): Route {
 
   if (page === 'docs') {
     return { page: 'docs', instrumentId: null, docName: detail || null }
+  }
+
+  if (page === 'pipeline') {
+    return { page: 'pipeline', instrumentId: null, docName: null }
   }
 
   return { page: 'data', instrumentId: null, docName: null }
@@ -69,6 +74,12 @@ export default function App() {
           >
             Instruments
           </a>
+          <a
+            href="#pipeline"
+            className={route.page === 'pipeline' ? 'active' : undefined}
+          >
+            Pipeline
+          </a>
           <a href="#docs" className={route.page === 'docs' ? 'active' : undefined}>
             Docs
           </a>
@@ -89,6 +100,7 @@ export default function App() {
         <Instruments scope={scope} instrumentId={route.instrumentId} />
       )}
       {route.page === 'docs' && <Docs docName={route.docName} />}
+      {route.page === 'pipeline' && <Pipeline />}
     </div>
   )
 }

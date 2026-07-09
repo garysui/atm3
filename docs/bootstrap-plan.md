@@ -128,8 +128,21 @@ actions, candlestick chart with `none`/`split`/`split_dividend` toggle and
 as-of date input — the algorithm-first thesis on screen). The market selector
 is fed by `select distinct market_scope` from the data. Verified in a live
 browser: META search → 501-bar chart, policy toggle re-computes from the
-macro, zero console errors. Note: the API holds a read lock — stop it before
-running write jobs (ingest/facts builds).
+macro, zero console errors.
+
+Added same day — the **Pipeline page** (daily replenish, owner request):
+the data flow as clickable stages (raw ingest steps → facts build → cache
+refresh), each step a card with a Run button, live state, and durable
+last-run history from `ops.runs`; one "run full daily replenish" button
+queues the whole chain in dependency order. To execute jobs from the UI the
+API server now owns the database WRITE lock: operations run one at a time on
+the writer connection through a FIFO queue while UI queries use a
+3-connection reader pool of the same instance. Step ids equal ops.runs job
+names, so button runs and CLI runs share one history; every step stays
+idempotent, so buttons are safe to mash. CLI scripts and the read-only
+inspection tools remain available when the server is stopped (DuckDB: one
+writer process OR readers). Docs are also served in-app (Docs tab, rendered
+markdown + zoomable diagrams).
 
 ## Later (explicitly out of scope now)
 

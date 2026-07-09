@@ -13,13 +13,19 @@ import { adjustmentPolicies } from '../core/adjustments.ts'
 import { openDatabase, SCHEMA_VERSION } from './db.ts'
 import { collectStatus } from './inspect.ts'
 import { logger } from './log.ts'
+import {
+  createOperationsController,
+  type OperationStep,
+} from './operations.ts'
 import { createReadPool, type ReadPool } from './read-pool.ts'
 
-// Read-only JSON API over facts + computed. It opens the database with
-// access_mode=READ_ONLY: it cannot write, and it must be stopped before
-// running jobs that write (DuckDB allows one writer OR concurrent readers).
-// Market selection is a query parameter — the data layer holds the whole
-// world; slicing happens here and in the UI.
+// JSON API over facts + computed, and the owner of the database write lock:
+// UI queries run on a pool of reader connections while pipeline operations
+// (ingest / facts build / cache refresh) run one at a time on the writer
+// connection through the operations queue. DuckDB allows one writer process,
+// so CLI write scripts require this server to be stopped — or just click
+// the Pipeline page instead. Market selection is a query parameter — the
+// data layer holds the whole world; slicing happens here and in the UI.
 
 const readPoolSize = 3
 
@@ -63,16 +69,19 @@ const docsDir = fileURLToPath(new URL('../docs', import.meta.url))
 const docNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
 export async function createApiServer(
-  options: { dbPath?: string } = {},
+  options: { dbPath?: string; operationSteps?: OperationStep[] } = {},
 ): Promise<ApiServer> {
-  const db = await openDatabase({ dbPath: options.dbPath, readOnly: true })
-  const readers: DuckDBConnection[] = [db.connection]
+  const db = await openDatabase({ dbPath: options.dbPath })
+  // db.connection is reserved as the WRITER (operations queue); queries run
+  // on sibling reader connections of the same instance.
+  const readers: DuckDBConnection[] = []
 
-  for (let index = 1; index < readPoolSize; index++) {
+  for (let index = 0; index < readPoolSize; index++) {
     readers.push(await db.instance.connect())
   }
 
   const pool: ReadPool = createReadPool(readers)
+  const operations = createOperationsController(db, options.operationSteps)
   const app = express()
   app.use(cors())
   app.use(express.json())
@@ -296,6 +305,58 @@ export async function createApiServer(
       name,
       markdown: await readFile(path.join(docsDir, `${name}.md`), 'utf8'),
     })
+  })
+
+  // The daily-replenish pipeline: step definitions, live queue state, and
+  // the last durable run per job from ops.runs.
+  app.get('/api/operations', async (_request, response) => {
+    // Step ids are code-defined constants — safe to inline.
+    const jobList = operations.steps
+      .map((step) => `'${step.id.replaceAll("'", "''")}'`)
+      .join(', ')
+    const lastRuns = await pool.run((connection) =>
+      readRows(
+        connection,
+        `
+          select job, status,
+                 strftime(started_at, '%Y-%m-%d %H:%M:%S') as started_utc,
+                 cast(round(epoch(finished_at - started_at)) as integer)
+                   as seconds,
+                 error
+          from ops.runs
+          where job in (${jobList})
+          qualify row_number() over (
+            partition by job order by started_at desc
+          ) = 1
+        `,
+      ),
+    )
+    const lastByJob = Object.fromEntries(
+      lastRuns.map((row) => [String(row.job), row]),
+    )
+    const status = operations.status()
+    response.json({
+      steps: operations.steps.map((step) => ({
+        ...step,
+        live: status[step.id],
+        lastRun: lastByJob[step.id] ?? null,
+      })),
+    })
+  })
+
+  app.post('/api/operations/run-all', (_request, response) => {
+    response.json({ queued: operations.enqueueAll() })
+  })
+
+  app.post('/api/operations/:id/run', (request, response) => {
+    const outcome = operations.enqueue(String(request.params.id))
+
+    if (!outcome.queued && outcome.reason === 'unknown operation') {
+      response.status(404).json({ error: outcome.reason })
+      return
+    }
+
+    response.json(outcome)
   })
 
   app.get('/api/runs', async (request, response) => {

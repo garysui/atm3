@@ -58,6 +58,21 @@ See [docs/tech-stack.md](docs/tech-stack.md) for decisions and rationale,
 [docs/data-model.md](docs/data-model.md) for the ERDs, and
 [docs/bootstrap-plan.md](docs/bootstrap-plan.md) for the build sequence.
 
+## Daily replenish
+
+Raw data keeps up by appending: each day's grouped bars, fresh reference /
+splits / dividends snapshots, then a facts rebuild and cache refresh. Every
+step is idempotent — re-running fetches only what is missing.
+
+Who initiates: you, from the app's **Pipeline** page — per-step Run buttons
+with live state and durable history (`ops.runs`), or one
+"run full daily replenish" button that queues the whole chain in dependency
+order. The same jobs remain runnable as npm scripts
+(`ingest:polygon:*`, `facts:build`, `computed:cache`) when the server is
+stopped. The API server owns the database write lock and executes one
+operation at a time on its writer connection; UI reads run on a reader pool.
+Scheduling (cron) can wrap either entry point later.
+
 ## Inspecting the data
 
 - `npm run status` — read-only overview: raw datasets, instruments by type,
@@ -73,7 +88,9 @@ See [docs/tech-stack.md](docs/tech-stack.md) for decisions and rationale,
   `duckdb -readonly <ATM3_DATA_DIR>/atm3.duckdb`) for interactive SQL.
 
 Inspection tools open the database read-only; the DuckDB file allows one
-writer or concurrent readers, so stop long-running jobs before querying.
+writer OR concurrent readers across processes. While the API server runs it
+holds the write lock — use the app (Data Center / Pipeline) then, and use
+the CLI tools when the server is stopped.
 
 ## Status
 

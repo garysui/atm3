@@ -87,8 +87,10 @@ Additional rules carried from atm2:
 - Store timestamps in UTC (`timestamptz`). `market_date` is the exchange-local
   trading date. Convert to exchange-local time only for display.
 - Do not commit `.env`, API keys, credentials, downloaded data, or database files.
-- Stop the dev server before running scripts that write the DuckDB file; DuckDB
-  write locks are per file.
+- The API server owns the DuckDB write lock and runs pipeline operations
+  (ingest / facts build / cache refresh) one at a time through its queue —
+  the UI Pipeline page is the normal way to run jobs. CLI scripts and the
+  read-only inspection tools need the server stopped.
 
 ## Safety Rules
 

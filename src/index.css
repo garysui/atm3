@@ -181,6 +181,86 @@ form {
   height: auto;
 }
 
+/* Pipeline page: stages left-to-right, one card per operation. */
+.pipeline {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.pipeline-stage-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pipeline-arrow {
+  font-size: 20px;
+  color: #888;
+  padding-top: 90px;
+}
+
+.pipeline-stage {
+  border: 1px solid #ccc;
+  background: #fafafa;
+  padding: 8px 10px;
+  min-width: 300px;
+}
+
+.pipeline-stage h3 {
+  margin: 0 0 8px;
+}
+
+.op-card {
+  border: 1px solid #ddd;
+  background: #fff;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+
+.op-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.op-state {
+  font-size: 11px;
+  padding: 0 6px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+.op-state.running {
+  background: #fff3cd;
+  border-color: #d4b106;
+}
+
+.op-state.queued {
+  background: #eef;
+}
+
+.op-state.ok {
+  background: #e6f6e6;
+  border-color: #7bbf7b;
+}
+
+.op-state.failed {
+  background: #fdecea;
+  border-color: #d33;
+}
+
+.op-result {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #444;
+  word-break: break-all;
+  margin-top: 4px;
+}
+
 /* Fullscreen diagram viewer: wheel zoom, drag pan. Plain, like the rest. */
 .lightbox {
   position: fixed;
