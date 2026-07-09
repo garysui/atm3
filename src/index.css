@@ -160,12 +160,66 @@ form {
   margin: 6px 0;
 }
 
+/* Docs tables hold prose: let cells wrap (data tables stay nowrap). */
+.doc th,
+.doc td {
+  white-space: normal;
+}
+
 .diagram {
   margin: 10px 0 16px;
   overflow-x: auto;
+  cursor: zoom-in;
+}
+
+.diagram:hover {
+  outline: 2px solid #cfe0f5;
 }
 
 .diagram svg {
   max-width: 100%;
+  height: auto;
+}
+
+/* Fullscreen diagram viewer: wheel zoom, drag pan. Plain, like the rest. */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(30, 30, 30, 0.72);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+
+.lightbox-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  background: #222;
+}
+
+.lightbox-toolbar .muted {
+  color: #aaa;
+}
+
+.lightbox-canvas {
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+  cursor: grab;
+}
+
+.lightbox-canvas:active {
+  cursor: grabbing;
+}
+
+.lightbox-content {
+  transform-origin: 0 0;
+  width: fit-content;
+}
+
+.lightbox-content svg {
+  max-width: none !important;
   height: auto;
 }
