@@ -50,7 +50,11 @@ const limitQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
 })
 
-const instrumentIdSchema = z.uuid()
+// Our deterministic ids are hash-derived; validate the hex shape only —
+// z.uuid() enforces RFC version bits and must not gate lookups.
+const instrumentIdSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 
 export async function createApiServer(
   options: { dbPath?: string } = {},

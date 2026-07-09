@@ -12,14 +12,32 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-api-'))
   const dbPath = path.join(dir, 'atm3.duckdb')
 
-  // Seed with a writer, then release it — the API opens read-only.
+  // Seed with a writer, then release it — the API opens read-only. One extra
+  // instrument uses a REAL macro-minted id so the API is exercised with
+  // production id shapes, not just handcrafted fixture uuids.
   const writer = await openDatabase({ dbPath })
-
-  try {
-    await seedFacts(writer)
-  } finally {
-    writer.closeSync()
-  }
+  const mintedId = await (async () => {
+    try {
+      await seedFacts(writer)
+      const minted = await writer.connection.runAndReadAll(`
+        select cast(deterministic_uuid('instrument', 'apitest') as varchar) as id
+      `)
+      const id = String(minted.getRowObjectsJson()[0]?.id)
+      await writer.connection.run(
+        `
+          insert into facts.instruments (
+            instrument_id, asset_class, instrument_type, name,
+            primary_market_scope
+          ) values (cast($id as uuid), 'equity', 'common_stock', 'Minted Corp',
+                    'us_stocks')
+        `,
+        { id },
+      )
+      return id
+    } finally {
+      writer.closeSync()
+    }
+  })()
 
   const server = await createApiServer({ dbPath })
   const listener = server.app.listen(0)
@@ -77,6 +95,15 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     const asOf = await barsFor('policy=split_dividend&as_of=2025-01-02')
     assert.equal(asOf.bars.length, 1)
     assert.equal(asOf.bars[0]?.close, 100)
+
+    // Macro-minted ids must pass API validation (regression: z.uuid()
+    // rejected non-RFC hash ids and 400'd most real instruments).
+    const minted = await fetch(`${base}/api/instruments/${mintedId}`)
+    assert.equal(minted.status, 200)
+    const mintedBars = await fetch(
+      `${base}/api/instruments/${mintedId}/bars?policy=none`,
+    )
+    assert.equal(mintedBars.status, 200)
 
     const missing = await fetch(
       `${base}/api/instruments/99999999-9999-4999-8999-999999999999`,

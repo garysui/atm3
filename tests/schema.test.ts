@@ -107,6 +107,34 @@ test('fresh database gets the full schema and reopening is idempotent', async ()
   }
 })
 
+test('deterministic_uuid mints RFC-shaped ids (version 3, variant 8-b)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-uuid-'))
+
+  try {
+    const db = await openDatabase({ dbPath: path.join(dir, 'atm3.duckdb') })
+
+    try {
+      const result = await db.connection.runAndReadAll(`
+        select cast(deterministic_uuid('instrument', key) as varchar) as id
+        from unnest(['FIGMETA0001', 'apple', 'x', 'nofigi:ZZZ:active']) as t(key)
+      `)
+
+      for (const row of result.getRowObjectsJson()) {
+        const id = String(row.id)
+        assert.match(
+          id,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-3[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+          `not an RFC v3-shaped uuid: ${id}`,
+        )
+      }
+    } finally {
+      db.closeSync()
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('a database from a different schema version refuses to open', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-schema-version-'))
   const dbPath = path.join(dir, 'atm3.duckdb')

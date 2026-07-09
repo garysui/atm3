@@ -19,14 +19,19 @@ create schema if not exists computed;
 create schema if not exists ops;
 
 -- Deterministic ids (tech-stack D5): the same identity evidence always mints
--- the same uuid, so a full rebuild from raw reproduces every id. MD5-derived,
--- not RFC 4122 — determinism is the requirement, not registry compliance.
+-- the same uuid, so a full rebuild from raw reproduces every id. MD5-derived
+-- with RFC 4122 version-3 and variant bits set (validators like zod's
+-- z.uuid() reject raw-hash "uuids" whose version nibble is not 1-8).
 create or replace macro deterministic_uuid(kind, key) as
   cast(concat(
     substr(md5(concat('atm3:', kind, ':', key)), 1, 8), '-',
-    substr(md5(concat('atm3:', kind, ':', key)), 9, 4), '-',
-    substr(md5(concat('atm3:', kind, ':', key)), 13, 4), '-',
-    substr(md5(concat('atm3:', kind, ':', key)), 17, 4), '-',
+    substr(md5(concat('atm3:', kind, ':', key)), 9, 4), '-3',
+    substr(md5(concat('atm3:', kind, ':', key)), 14, 3), '-',
+    substr('89ab',
+      ((strpos('0123456789abcdef',
+               substr(md5(concat('atm3:', kind, ':', key)), 17, 1)) - 1) % 4)
+        + 1, 1),
+    substr(md5(concat('atm3:', kind, ':', key)), 18, 3), '-',
     substr(md5(concat('atm3:', kind, ':', key)), 21, 12)
   ) as uuid);
 
