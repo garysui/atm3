@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react'
 import { getJson, type Row } from './api.ts'
 import { DataCenter } from './pages/DataCenter.tsx'
+import { Docs } from './pages/Docs.tsx'
 import { Instruments } from './pages/Instruments.tsx'
 
-type Route = { page: 'data' | 'instruments'; instrumentId: string | null }
+type Route = {
+  page: 'data' | 'instruments' | 'docs'
+  instrumentId: string | null
+  docName: string | null
+}
 
 function parseRoute(): Route {
   const hash = window.location.hash.replace(/^#/, '')
-  const [page, instrumentId] = hash.split('/')
+  const [page, detail] = hash.split('/')
 
   if (page === 'instruments') {
-    return { page: 'instruments', instrumentId: instrumentId || null }
+    return { page: 'instruments', instrumentId: detail || null, docName: null }
   }
 
-  return { page: 'data', instrumentId: null }
+  if (page === 'docs') {
+    return { page: 'docs', instrumentId: null, docName: detail || null }
+  }
+
+  return { page: 'data', instrumentId: null, docName: null }
 }
 
 export default function App() {
@@ -60,6 +69,9 @@ export default function App() {
           >
             Instruments
           </a>
+          <a href="#docs" className={route.page === 'docs' ? 'active' : undefined}>
+            Docs
+          </a>
         </nav>
         <label className="muted">
           market{' '}
@@ -72,11 +84,11 @@ export default function App() {
           </select>
         </label>
       </header>
-      {route.page === 'data' ? (
-        <DataCenter />
-      ) : (
+      {route.page === 'data' && <DataCenter />}
+      {route.page === 'instruments' && (
         <Instruments scope={scope} instrumentId={route.instrumentId} />
       )}
+      {route.page === 'docs' && <Docs docName={route.docName} />}
     </div>
   )
 }

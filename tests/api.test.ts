@@ -126,6 +126,22 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
       `${base}/api/instruments/${A}/bars?policy=bogus`,
     )
     assert.equal(badPolicy.status, 400)
+
+    // Docs are served into the UI; names are allowlisted from docs/*.md.
+    const docs = (await (await fetch(`${base}/api/docs`)).json()) as Array<{
+      name: string
+      title: string
+    }>
+    assert.ok(docs.some((doc) => doc.name === 'market-data-phenomena'))
+
+    const phenomena = (await (
+      await fetch(`${base}/api/docs/market-data-phenomena`)
+    ).json()) as { markdown: string }
+    assert.ok(phenomena.markdown.includes('Tickers change'))
+
+    assert.equal((await fetch(`${base}/api/docs/no-such-doc`)).status, 404)
+    assert.equal(
+      (await fetch(`${base}/api/docs/..%2Fpackage`)).status, 400)
   } finally {
     await new Promise((resolve) => listener.close(resolve))
     server.closeSync()

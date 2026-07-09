@@ -1,3 +1,6 @@
+import { readdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import cors from 'cors'
 import express, {
   type NextFunction,
@@ -55,6 +58,9 @@ const limitQuerySchema = z.object({
 const instrumentIdSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+
+const docsDir = fileURLToPath(new URL('../docs', import.meta.url))
+const docNamePattern = /^[a-z0-9][a-z0-9-]*$/
 
 export async function createApiServer(
   options: { dbPath?: string } = {},
@@ -251,6 +257,45 @@ export async function createApiServer(
       ),
     )
     response.json({ policy: query.policy, asOf: query.as_of ?? null, bars: rows })
+  })
+
+  // Project docs served into the UI — the tool documents its own gotchas
+  // (docs/market-data-phenomena.md is the field-notes catalog).
+  app.get('/api/docs', async (_request, response) => {
+    const files = (await readdir(docsDir))
+      .filter((file) => file.endsWith('.md'))
+      .sort()
+    const docs = await Promise.all(
+      files.map(async (file) => {
+        const content = await readFile(path.join(docsDir, file), 'utf8')
+        return {
+          name: file.replace(/\.md$/, ''),
+          title: content.match(/^#\s+(.+)$/m)?.[1] ?? file,
+        }
+      }),
+    )
+    response.json(docs)
+  })
+
+  app.get('/api/docs/:name', async (request, response) => {
+    const name = String(request.params.name)
+
+    if (!docNamePattern.test(name)) {
+      response.status(400).json({ error: 'invalid doc name' })
+      return
+    }
+
+    const files = await readdir(docsDir)
+
+    if (!files.includes(`${name}.md`)) {
+      response.status(404).json({ error: 'doc not found' })
+      return
+    }
+
+    response.json({
+      name,
+      markdown: await readFile(path.join(docsDir, `${name}.md`), 'utf8'),
+    })
   })
 
   app.get('/api/runs', async (request, response) => {

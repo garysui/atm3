@@ -106,3 +106,56 @@ form {
   border: 1px solid #ddd;
   margin: 6px 0 12px;
 }
+
+.doc-list {
+  margin: 4px 0 10px;
+}
+
+.doc-list a {
+  margin-right: 12px;
+  color: #06c;
+  text-decoration: none;
+}
+
+.doc-list a.active {
+  font-weight: 700;
+  color: #000;
+}
+
+.doc {
+  max-width: 860px;
+}
+
+.doc h1 {
+  font-size: 16px;
+  margin: 10px 0 8px;
+}
+
+.doc h2 {
+  font-size: 13px;
+  margin: 16px 0 4px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 2px;
+}
+
+.doc p,
+.doc li {
+  margin: 4px 0;
+}
+
+.doc code {
+  background: #f4f4f4;
+  padding: 0 3px;
+  font-size: 12px;
+}
+
+.doc pre {
+  background: #f6f6f6;
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  overflow-x: auto;
+}
+
+.doc table {
+  margin: 6px 0;
+}
