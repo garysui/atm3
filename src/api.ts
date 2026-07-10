@@ -93,6 +93,40 @@ export type ViewAtResponse = {
   }
 }
 
+export type RankAtRow = {
+  instrument_id: string
+  symbol: string
+  name: string
+  ret_1d: number | null
+  resid_z: number | null
+  ret_z: number | null
+  ret_z_vadj: number | null
+  range_surprise: number | null
+  rvol_21d: number | null
+  ret_pctile_252d: number | null
+  dollar_adv21: number | null
+  xs_rank: number
+}
+
+export type RankAtResponse = {
+  t: string
+  scope: string
+  baseline: 'SPY' | null
+  sort: string
+  min_dollar_adv: number
+  universe: {
+    traded_at_t: number
+    qualifying: number
+    excluded_liquidity: number
+    excluded_window: number
+  }
+  gauges: {
+    median_abs_ret_z: number | null
+    share_abs_ret_z_gt2: number | null
+  }
+  rows: RankAtRow[]
+}
+
 export type ViewAtMinuteResponse = {
   t: { date: string; minute: string }
   available_at: 'minute'

@@ -6,6 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { createApiServer } from '../server/api.ts'
 import { gzipSync } from 'node:zlib'
+import { refreshAdjustedBarsCache } from '../server/computed-build.ts'
 import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 import { buildMinuteParquet } from '../server/facts-minute.ts'
 import { landRawFile } from '../server/raw-zone.ts'
@@ -62,6 +63,7 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
         ['AAA', '2000', '51', '51', '51.5', '50.5', '1735914600000000000', '20'],
       ])
       await buildMinuteParquet(writer.connection, { dataDir: dir })
+      await refreshAdjustedBarsCache(writer.connection)
       await writer.connection.run(`
         insert into facts.exchanges (
           exchange_mic, name, market_scope, calendar_id, timezone, currency
@@ -298,6 +300,27 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
       minuteView.forward.rows.map(({ horizon }) => horizon),
       ['to_close', 'next_open', '1d', '5d'],
     )
+
+    // Cross-sectional ranking: valid shape on a real bar date (windows are
+    // too short here for any name to qualify — honesty, not absence), 404
+    // with neighbors on a non-bar date.
+    const rank = (await (
+      await fetch(`${base}/api/rank-at?t=2025-01-03&scope=us_stocks`)
+    ).json()) as {
+      baseline: null
+      sort: string
+      universe: { traded_at_t: number; qualifying: number }
+      rows: unknown[]
+    }
+    assert.equal(rank.baseline, null) // no SPY in this fixture
+    assert.equal(rank.sort, 'ret_z')
+    assert.ok(rank.universe.traded_at_t >= 1)
+    assert.equal(rank.universe.qualifying, 0)
+    assert.deepEqual(rank.rows, [])
+    const rankBadDate = await fetch(
+      `${base}/api/rank-at?t=2025-01-04&scope=us_stocks`,
+    )
+    assert.equal(rankBadDate.status, 404)
 
     const noMinutes = await fetch(
       `${base}/api/instruments/${A}/view-at-minute?date=2025-01-06&minute=10:00`,

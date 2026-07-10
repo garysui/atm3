@@ -66,10 +66,11 @@ function closeTo(actual: unknown, expected: number): void {
 }
 
 test('catalog declares every explicitly listed metric exactly once', () => {
-  // The plan tables contain 40 non-context + 13 context ids = 53. The prose
-  // total of 47 is an arithmetic typo; no named metric is silently cut.
-  assert.equal(metricsCatalog.length, 53)
-  assert.equal(new Set(metricsCatalog.map(({ id }) => id)).size, 53)
+  // The plan tables contain 40 non-context + 13 context ids = 53; the VT-P6
+  // surprise layer adds 7 surprise/volatility ids + 2 residual-z context
+  // ids = 62. No named metric is silently cut.
+  assert.equal(metricsCatalog.length, 62)
+  assert.equal(new Set(metricsCatalog.map(({ id }) => id)).size, 62)
   for (const metric of metricsCatalog) {
     assert.ok(metric.id)
     assert.ok(metric.family)
@@ -246,8 +247,52 @@ test('all non-context formulas match visible independent arithmetic', async () =
       days_since_dividend: bars.filter((bar) => bar.date > dividendDate && bar.date <= t).length,
       declared_ex_days: dates.filter((date) => date > t && date <= knownExDate).length,
       div_yield_ttm: 1 / previousDividendBar.close,
+      // VT-P6 surprise layer. Yang-Zhang over idx 0..20 with n = 21:
+      // sigma^2 = var(overnight) + k var(open-close) + (1-k) mean(RS),
+      // k = 0.34 / (1.34 + 22/20).
+      yz_vol_21d: (() => {
+        const on = Array.from({ length: 21 }, (_, i) => Math.log(x[i].ao / x[i + 1].ac))
+        const oc = Array.from({ length: 21 }, (_, i) => Math.log(x[i].ac / x[i].ao))
+        const rs = Array.from({ length: 21 }, (_, i) =>
+          Math.log(x[i].ah / x[i].ac) * Math.log(x[i].ah / x[i].ao) +
+          Math.log(x[i].al / x[i].ac) * Math.log(x[i].al / x[i].ao))
+        const k = 0.34 / (1.34 + 22 / 20)
+        return Math.sqrt(
+          sampleStd(on) ** 2 + k * sampleStd(oc) ** 2 + (1 - k) * mean(rs),
+        ) * Math.sqrt(252)
+      })(),
+      range_med_21d: median(Array.from({ length: 21 }, (_, i) =>
+        (x[i + 1].ah - x[i + 1].al) / x[i + 2].ac)),
+      range_surprise: ((x[0].ah - x[0].al) / x[1].ac) /
+        median(Array.from({ length: 21 }, (_, i) =>
+          (x[i + 1].ah - x[i + 1].al) / x[i + 2].ac)),
+      // Yesterday-anchored daily Parkinson sigma (raw h/l, bars 1..21).
+      ret_z_21d: logReturns(0) / Math.sqrt(
+        mean(Array.from({ length: 21 }, (_, i) =>
+          Math.log(x[i + 1].high / x[i + 1].low) ** 2)) / (4 * Math.log(2))),
+      ret_z_vadj_21d: (logReturns(0) / Math.sqrt(
+        mean(Array.from({ length: 21 }, (_, i) =>
+          Math.log(x[i + 1].high / x[i + 1].low) ** 2)) / (4 * Math.log(2)))) /
+        Math.sqrt(dv(0) / mean(Array.from({ length: 21 }, (_, i) => dv(i + 1)))),
+      ret_pctile_252d: (() => {
+        const previous = Array.from({ length: 252 }, (_, i) => logReturns(i + 1))
+        const lr0 = logReturns(0)
+        return (previous.filter((value) => value < lr0).length +
+          0.5 * previous.filter((value) => value === lr0).length) / 252
+      })(),
+      // Adjusted Fisher-Pearson excess kurtosis (DuckDB kurtosis()).
+      ret_kurt_252d: (() => {
+        const previous = Array.from({ length: 252 }, (_, i) => logReturns(i + 1))
+        const n = previous.length
+        const center = mean(previous)
+        const s = sampleStd(previous)
+        const fourth = previous.reduce(
+          (sum, value) => sum + ((value - center) / s) ** 4, 0)
+        return (n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3)) * fourth -
+          (3 * (n - 1) ** 2) / ((n - 2) * (n - 3))
+      })(),
     }
-    assert.equal(Object.keys(expected).length, 40)
+    assert.equal(Object.keys(expected).length, 47)
 
     const report = await metricsAt(db.connection, {
       instrumentId: US,

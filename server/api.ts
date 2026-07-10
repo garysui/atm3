@@ -25,6 +25,7 @@ import {
   ViewAtMinuteDateError,
 } from './metrics-at-minute.ts'
 import { forwardReturns, ViewAtTDateError } from './forward-returns.ts'
+import { rankAt, RankAtDateError, rankSortKeys } from './rank-at.ts'
 import { forwardReturnsFromMinute } from './forward-returns-minute.ts'
 
 // JSON API over facts + computed, and the owner of the database write lock:
@@ -73,6 +74,14 @@ const viewAtQuerySchema = z.object({
   t: z.iso.date(),
   forward: z.enum(['0', '1']).default('0'),
   entry: z.enum(['next_open', 't_close']).default('next_open'),
+})
+
+const rankAtQuerySchema = z.object({
+  t: z.iso.date(),
+  scope: z.string().default('us_stocks'),
+  sort: z.enum(rankSortKeys).optional(),
+  min_adv: z.coerce.number().nonnegative().default(0),
+  limit: z.coerce.number().int().min(1).max(500).default(50),
 })
 
 const viewAtMinuteQuerySchema = z.object({
@@ -407,6 +416,22 @@ export async function createApiServer(
     response.json(report)
   })
 
+  // Cross-sectional unusual-movement ranking at T (VT-P7): each name's
+  // surprise against its own history, ranked across the day's universe.
+  app.get('/api/rank-at', async (request, response) => {
+    const query = rankAtQuerySchema.parse(request.query)
+    const report = await pool.run((connection) =>
+      rankAt(connection, {
+        t: query.t,
+        scope: query.scope,
+        sort: query.sort,
+        minDollarAdv: query.min_adv,
+        limit: query.limit,
+      }),
+    )
+    response.json(report)
+  })
+
   // Intraday coverage for one instrument: one summary row per day with
   // minute data (recent first).
   app.get('/api/instruments/:id/minute-days', async (request, response) => {
@@ -614,6 +639,15 @@ export async function createApiServer(
       }
 
       if (error instanceof ViewAtTDateError) {
+        response.status(404).json({
+          error: error.message,
+          previous_date: error.previousDate,
+          next_date: error.nextDate,
+        })
+        return
+      }
+
+      if (error instanceof RankAtDateError) {
         response.status(404).json({
           error: error.message,
           previous_date: error.previousDate,

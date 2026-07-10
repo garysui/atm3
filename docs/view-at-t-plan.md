@@ -362,6 +362,31 @@ so v1 makes the model explicit and small rather than pretending neutrality:
 
 ## Implementation notes
 
+- 2026-07-10, VT-P6 (owner-implemented) — the surprise layer: 9 catalog
+  additions per the approved analysis. `yz_vol_21d` (Yang–Zhang: overnight
+  + open-close + Rogers–Satchell with k = 0.34/(1.34 + 22/20)) joins the
+  volatility family; a new `surprise` family holds `range_med_21d`,
+  `range_surprise` (ratio-to-median — the raw range is Feller-skewed, not
+  Gaussian), `ret_z_21d` (today's log return over the YESTERDAY-anchored
+  daily Parkinson sigma), `ret_z_vadj_21d` (over sqrt(relative dollar
+  volume) — MDH volume-clock), `ret_pctile_252d` (distribution-free, note
+  the ~0.996 saturation), `ret_kurt_252d` (adjusted Fisher–Pearson excess,
+  matching DuckDB kurtosis()); the context family gains `resid_z_spy` and
+  `resid_z_vadj_spy` (beta and residual sigma estimated on the 63 aligned
+  pairs ending at T−1). Every denominator excludes T — tested. Catalog is
+  now 62 daily ids.
+- 2026-07-10, VT-P7 (owner-implemented) — cross-sectional ranking:
+  `server/rank-at.ts` computes the surprise set for every name traded at T
+  in one SQL pass over the verified adjusted cache (consecutive-day
+  ratios are anchor-invariant, so cache-basis equals as-of-T basis —
+  asserted by an engine-parity test against metricsAt to 1e-9 and a
+  cross-sectional truncation test). Default sort |resid_z| where a market
+  baseline exists (a raw-z list on a big market day is a beta list —
+  demonstrated by the planted-event fixture), `ret_z` otherwise;
+  explicit residual sort on a baseline-less scope errors. Liquidity floor
+  (`min_dollar_adv`) with counted exclusions; day-context gauges (median
+  |ret z|, share beyond 2σ); `GET /api/rank-at` + the Movers page.
+
 - 2026-07-10, post-review hardening (owner-implemented): forward horizons
   past the known calendar return per-row `beyond_calendar` results instead
   of failing the whole call — near horizons at a recent T still resolve.

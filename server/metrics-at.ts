@@ -142,8 +142,17 @@ export async function metricsAt(
           ln(ac / nullif(prev_ac, 0)) as lr,
           ao / nullif(prev_ac, 0) - 1 as gap_i,
           c * v as dv,
-          greatest(ah, prev_ac) - least(al, prev_ac) as tr
+          greatest(ah, prev_ac) - least(al, prev_ac) as tr,
+          -- Yang-Zhang components: overnight, open-to-close, Rogers-Satchell.
+          ln(ao / nullif(prev_ac, 0)) as yz_on,
+          ln(ac / nullif(ao, 0)) as yz_oc,
+          ln(ah / nullif(ac, 0)) * ln(ah / nullif(ao, 0))
+            + ln(al / nullif(ac, 0)) * ln(al / nullif(ao, 0)) as yz_rs,
+          (ah - al) / nullif(prev_ac, 0) as rel_range
         from indexed
+      ),
+      today as (
+        select max(lr) filter (where idx = 0) as lr0 from calc
       ),
       direction as (
         select sign(max(r) filter (where idx = 0)) as current_direction
@@ -281,8 +290,27 @@ export async function metricsAt(
           count(dv) filter (where idx between 0 and 20) as dv21_count,
           min(dv) filter (where idx between 0 and 20) as dv21_min,
           avg(abs(r) / nullif(dv, 0)) filter (where idx between 0 and 20)
-            * 1000000 as amihud_21d
-        from calc
+            * 1000000 as amihud_21d,
+          var_samp(yz_on) filter (where idx between 0 and 20) as yz_var_on,
+          var_samp(yz_oc) filter (where idx between 0 and 20) as yz_var_oc,
+          avg(yz_rs) filter (where idx between 0 and 20) as yz_rs_mean,
+          count(yz_on) filter (where idx between 0 and 20) as yz_count,
+          median(rel_range) filter (where idx between 1 and 21)
+            as range_med_prev,
+          count(rel_range) filter (where idx between 1 and 21)
+            as range_prev_count,
+          max(rel_range) filter (where idx = 0) as rel_range_0,
+          sqrt(
+            avg(power(ln(h / nullif(l, 0)), 2))
+              filter (where idx between 1 and 21) / (4 * ln(2))
+          ) as park_prev_daily,
+          count(*) filter (where idx between 1 and 252 and lr < today.lr0)
+            as pct_below,
+          count(*) filter (where idx between 1 and 252 and lr = today.lr0)
+            as pct_equal,
+          count(lr) filter (where idx between 1 and 252) as prev252_count,
+          kurtosis(lr) filter (where idx between 1 and 252) as kurt_prev
+        from calc cross join today
       )
       select
         a.total_bars,
@@ -347,7 +375,33 @@ export async function metricsAt(
             and d.market_date > cast($t as date)
             and d.market_date <= e.next_known_ex
         ) end as declared_ex_days,
-        dy.value as div_yield_ttm
+        dy.value as div_yield_ttm,
+        -- Yang-Zhang: sigma^2 = var_overnight + k var_openclose + (1-k) RS,
+        -- k = 0.34 / (1.34 + (n+1)/(n-1)) with n = 21.
+        case when a.yz_count = 21 then
+          sqrt(
+            a.yz_var_on
+            + (0.34 / (1.34 + 22.0 / 20.0)) * a.yz_var_oc
+            + (1 - 0.34 / (1.34 + 22.0 / 20.0)) * a.yz_rs_mean
+          ) * sqrt(252)
+        end as yz_vol_21d,
+        case when a.range_prev_count = 21
+          then a.range_med_prev end as range_med_21d,
+        case when a.range_prev_count = 21 and a.range_med_prev > 0
+          then a.rel_range_0 / a.range_med_prev end as range_surprise,
+        case when a.park_prev_daily > 0
+          then (select lr0 from today) / a.park_prev_daily
+        end as ret_z_21d,
+        case when a.park_prev_daily > 0 and a.adv21_count = 21
+              and a.adv21_before > 0 and a.dv0 > 0
+          then ((select lr0 from today) / a.park_prev_daily)
+               / sqrt(a.dv0 / a.adv21_before)
+        end as ret_z_vadj_21d,
+        case when a.prev252_count = 252
+          then (a.pct_below + 0.5 * a.pct_equal) / 252.0
+        end as ret_pctile_252d,
+        case when a.prev252_count = 252 then a.kurt_prev
+        end as ret_kurt_252d
       from aggregates a
       cross join streak
       cross join calendar_stats cs
@@ -415,6 +469,25 @@ export async function metricsAt(
         metric.value = contextValue.value
         metric.bars_available = contextValue.bars_available
         metric.reason = contextValue.reason
+      }
+    }
+
+    // resid_z_vadj composes the context-side residual z with the SQL-side
+    // relative dollar volume (volume as the clock, per MDH).
+    const residZ = metrics.find((metric) => metric.id === 'resid_z_spy')
+    const residZVadj = metrics.find(
+      (metric) => metric.id === 'resid_z_vadj_spy',
+    )
+    if (residZ && residZVadj && residZVadj.reason !== 'insufficient_window') {
+      const rvol = mappedValue(row.rvol_21d)
+      if (typeof residZ.value === 'number' && typeof rvol === 'number' && rvol > 0) {
+        residZVadj.value = residZ.value / Math.sqrt(rvol)
+        residZVadj.bars_available = residZ.bars_available
+        residZVadj.reason = null
+      } else {
+        residZVadj.value = null
+        residZVadj.bars_available = residZ.bars_available
+        residZVadj.reason = residZ.reason ?? 'undefined_input'
       }
     }
   }

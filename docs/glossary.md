@@ -7,10 +7,11 @@ definition, the exact calculation where one exists, and why it matters.
 Formulas are ```` ```math ```` blocks (KaTeX-rendered in the Docs tab).
 
 Sections: Notation · Data layers · Identity · Corporate actions &
-adjustment · Calendars, sessions, publication · View at T · Daily metrics
-(state, returns, gap, trend, volatility, volume, events, context) · Session
-metrics · Forward returns · Flags & reasons · CN market terms · Pipeline &
-operations.
+adjustment · Calendars, sessions, publication · View at T · Volatility
+estimation (theory) · Daily metrics (state, returns, gap, trend,
+volatility, volume, events, context & residuals, surprise) · Cross-
+sectional ranking · Session metrics · Forward returns · Flags & reasons ·
+CN market terms · Pipeline & operations.
 
 ## Notation (used by every metric)
 
@@ -226,6 +227,75 @@ F(d) = \prod_{e\,:\; d \,<\, \mathit{ex}_e \,\le\, \mathit{anchor}} f_e
   The list itself is today's survivors: prices are period-correct, but the
   *label* is not a historically tradable signal.
 
+## Volatility estimation — why range-based (theory)
+
+A daily bar is a cumulative conclusion about a whole path, not one trading
+point — its high and low carry information the close alone throws away.
+That observation founded a family of estimators this project uses:
+
+- **Close-to-close** (`vol_21d`): the baseline, `stdev` of log returns.
+  Unbiased but statistically wasteful — one number per day.
+- **Parkinson (1980)** — variance from the squared log range; for a
+  driftless diffusion `E[ln²(H/L)] = 4\ln 2 \, \sigma^2`, giving ~5×
+  the efficiency of close-to-close:
+
+```math
+\hat\sigma^2_{P} = \frac{1}{4 \ln 2}\;
+\operatorname{mean}\!\left(\ln^2 \frac{h_i}{l_i}\right)
+```
+
+  Assumptions to respect: no drift, no overnight jump, continuous trading
+  (discrete sampling means the observed range under-covers the true range,
+  biasing σ slightly low — worst for thinly traded names).
+- **Garman–Klass (1980)** — adds open/close information to the range
+  (~7–8× efficient); same no-drift, no-overnight assumptions:
+
+```math
+\hat\sigma^2_{GK} = \operatorname{mean}\!\left(
+\tfrac{1}{2}\ln^2\tfrac{h_i}{l_i}
+- (2\ln 2 - 1)\,\ln^2\tfrac{c_i}{o_i}\right)
+```
+
+- **Rogers–Satchell (1991)** — drift-robust; each bar contributes
+  `u(u-c) + d(d-c)` with `u = ln(h/o)`, `d = ln(l/o)`, `c = ln(c/o)`:
+
+```math
+\hat\sigma^2_{RS} = \operatorname{mean}\big(u_i(u_i - c_i) + d_i(d_i - c_i)\big)
+```
+
+- **Yang–Zhang (2000)** — the practical default for daily bars
+  (`yz_vol_21d`): decomposes variance into the overnight jump, the
+  open-to-close move, and the drift-robust RS term, with a
+  minimum-variance weight `k`. Handles both drift AND overnight gaps —
+  the two failure modes of everything above:
+
+```math
+\hat\sigma^2_{YZ} = \hat\sigma^2_{\text{overnight}}
++ k\,\hat\sigma^2_{\text{open-close}}
++ (1 - k)\,\hat\sigma^2_{RS}
+\qquad
+k = \frac{0.34}{1.34 + \frac{n+1}{n-1}}
+```
+
+Distributional facts that shape the surprise metrics:
+
+- The **raw range is not normal** — it is the range of a diffusion path
+  (Feller 1951): strictly positive, right-skewed. `range_surprise` is
+  therefore a ratio to the trailing *median*, not a z-score.
+- The **log range is approximately normal**
+  (Alizadeh–Brandt–Diebold 2002) — the result that makes range-based
+  sigma estimation well-behaved.
+- **Returns are conditionally fat-tailed**: per-name kurtosis is commonly
+  5–30 versus 3 for a Gaussian, so a "2σ day" is more frequent than the
+  normal 4.6% and differently so per name. σ is a *scale*, not a
+  probability — `ret_pctile_252d` supplies the distribution-free
+  probability and `ret_kurt_252d` says how literally to read σ bands for
+  this name.
+- **Mixture of Distributions Hypothesis** (Clark 1973): variance scales
+  with trading volume — volume proxies information arrival, making it the
+  market's clock. Dividing a z-score by `sqrt(relative volume)` re-expresses
+  the move in participation time; that is the `_vadj` family.
+
 ## Daily metrics — state
 
 - **`close_raw`** — the as-traded close at T, `c_0`. The price a predicate
@@ -350,6 +420,9 @@ standard deviation.
 \mathit{atr\_pct\_14} = \frac{\operatorname{mean}(\mathit{TR}_0..\mathit{TR}_{13})}{ac_0}
 ```
 
+- **`yz_vol_21d`** — the Yang–Zhang annualized sigma over the last 21
+  bars (see the theory section above): overnight + open-close + RS terms,
+  drift- and gap-robust. The σ to quote for a name.
 - **`max_abs_ret_21d`** — the largest single-day |move| in a month: the
   MAX/lottery-preference measure (Bali–Cakici–Whitelaw); big recent
   jackpots predict poor subsequent returns on average.
@@ -443,6 +516,73 @@ e_i = \mathit{lr}_i - \hat\beta\,\mathit{lr}_{b,i}
   `ret_n − ret_n(SPY)`: no beta model, just outperformance.
 - **`tracking_etf`** — the selected baseline's symbol (see *tracking ETF*
   above). Selection is trailing-only and can legitimately flip over time.
+- **`resid_z_spy`** — **today's own movement in units of yesterday's own
+  sigma**: β̂ and the residual sigma are estimated on the 63 aligned pairs
+  ending at T−1 (today never contaminates its own denominator), then
+  today's residual is scored. The default cross-sectional ranking key — on
+  a −3% market day a raw-z list is a beta list; this one is not.
+
+```math
+\hat\beta_{prev} = \frac{\operatorname{cov}_{1..63}}{\operatorname{var}_{1..63}}
+\qquad
+\mathit{resid\_z} = \frac{\mathit{lr}_0 - \hat\beta_{prev}\,\mathit{lr}_{b,0}}
+{\operatorname{stdev}_{1..63}(e)}
+```
+
+- **`resid_z_vadj_spy`** — `resid_z / sqrt(rvol)`: the residual surprise
+  in participation time (MDH). Reading the pair: big `resid_z`, small
+  `vadj` = repricing fully backed by volume; both big = the move outran
+  even its own participation.
+
+## Daily metrics — surprise
+
+Today versus this name's own trailing distribution; every denominator ends
+at **T−1**.
+
+- **`range_med_21d`** — median relative range `(h−l)/prev close` of the
+  21 bars ending yesterday: the name's typical daily travel, robust to one
+  event day.
+- **`range_surprise`** — today's relative range over that median. Ratio,
+  not z — the range is right-skewed (Feller), so sigma-scaling would lie.
+- **`ret_z_21d`** — today's log return over the yesterday-anchored *daily*
+  Parkinson sigma (range-based per the theory section: ~5× the data per
+  day, so 21 bars estimate it usefully):
+
+```math
+\mathit{ret\_z} = \frac{\mathit{lr}_0}
+{\sqrt{\operatorname{mean}_{1..21}\!\left(\ln^2\tfrac{h_i}{l_i}\right) / (4\ln 2)}}
+```
+
+- **`ret_z_vadj_21d`** — `ret_z / sqrt(dv_0 / mean(dv_1..dv_21))`: the
+  move in volume-clock units (MDH). Distinguishes "normal random walk,
+  loud tape" from "genuinely out of bounds".
+- **`ret_pctile_252d`** — where today's return sits in the trailing 252
+  (below-count + half of ties, over 252): calibrated, distribution-free,
+  but saturating — every "biggest day in a year" reads ~0.996, which is
+  why ranking breaks ties with |z|.
+- **`ret_kurt_252d`** — excess kurtosis of the trailing returns: ≈0 means
+  σ bands read literally; 10+ means tails happen and 3σ is Tuesday.
+
+## Cross-sectional ranking (Movers at T)
+
+- **rank-at** — the first cross-sectional computation: one SQL pass over
+  the adjusted cache computes each traded name's surprise metrics at T and
+  ranks them across the day (`GET /api/rank-at`, the Movers page).
+- **sort key** — `resid_z` by default where a market baseline exists (rank
+  own-movement, not beta), `ret_z` otherwise (and for scopes without a
+  baseline, explicitly).
+- **xs_rank** — the name's position by |sort key| among the day's
+  qualifying universe: time-series surprise first, then a second
+  normalization across the market.
+- **liquidity floor (`min_dollar_adv`)** — z-scores explode on empty
+  tapes (a spread bounce on no volume is a huge "surprise"); names below
+  the trailing dollar-ADV floor are excluded and counted, never silently
+  dropped.
+- **day-context gauges** — the cross-section's own state: median |ret z|
+  and the share of names beyond 2σ. A 3σ name on a day when 1% of the
+  market is beyond 2σ is an event; the same name on a 20% day is weather.
+- **universe accounting** — every exclusion is a number in the response:
+  `traded_at_t`, `qualifying`, `excluded_liquidity`, `excluded_window`.
 
 ## Session metrics (intraday view at minute T)
 

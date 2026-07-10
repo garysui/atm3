@@ -189,10 +189,20 @@ test('synthetic 1.5 beta recovers injected residual noise for all context ids', 
     ] as const) {
       closeTo(metrics.get(pair[0])?.value, Number(metrics.get(pair[1])?.value))
     }
-    for (const metric of report.metrics.filter(({ family }) => family === 'context')) {
+    const residZIds = new Set(['resid_z_spy', 'resid_z_vadj_spy'])
+    for (const metric of report.metrics.filter(
+      ({ family, id }) => family === 'context' && !residZIds.has(id),
+    )) {
       assert.equal(metric.reason, null, metric.id)
       assert.equal(metric.bars_available, 64, metric.id)
     }
+    // The yesterday-anchored z needs a 64th aligned pair; with exactly 64
+    // closes it stays honestly insufficient.
+    assert.equal(metrics.get('resid_z_spy')?.reason, 'insufficient_window')
+    assert.equal(
+      metrics.get('resid_z_vadj_spy')?.reason,
+      'insufficient_window',
+    )
 
     const constant = dates.map((date) => ({ date, close: 100 }))
     const stockSeries: DatedClose[] = dates.map((date, index) => ({
@@ -245,5 +255,54 @@ test('tracking ETF selection flips only when trailing-at-T data says so', async 
     assert.equal(metricMap(early.metrics).get('tracking_etf')?.value, 'SPY')
     assert.equal(late.context_baselines?.tracking, 'QQQ')
     assert.equal(metricMap(late.metrics).get('tracking_etf')?.value, 'QQQ')
+  })
+})
+
+test('residual z scores today against the window ending yesterday', async () => {
+  await withTempDatabase(async (db) => {
+    // 63 sine-baseline returns with orthogonal cosine noise, PLUS one new
+    // day. The prior 63-pair window is then exactly the original arrays:
+    // beta_prev = 1.5 and sigma_prev = sampleStd(noise), so
+    // resid_z = newNoise / sampleStd(noise) by construction.
+    const n = 63
+    const baseline = Array.from(
+      { length: n },
+      (_, index) => 0.01 * Math.sin((2 * Math.PI * index) / n),
+    )
+    const noise = Array.from(
+      { length: n },
+      (_, index) => 0.002 * Math.cos((4 * Math.PI * index) / n),
+    )
+    const newBaseline = 0.004
+    const newNoise = 0.009 // an outsized idiosyncratic day
+    const stock = [
+      ...baseline.map((value, index) => 1.5 * value + noise[index]),
+      1.5 * newBaseline + newNoise,
+    ]
+    const dates = openDates(n + 2)
+    const stockCloses = closesFromReturns(stock)
+    const spyCloses = closesFromReturns([...baseline, newBaseline])
+    await seedSeries(db, dates, [
+      { id: STOCK, symbol: 'SYN', closes: stockCloses },
+      { id: SPY, symbol: 'SPY', closes: spyCloses, type: 'etf' },
+    ])
+
+    const metrics = metricMap((await metricsAt(db.connection, {
+      instrumentId: STOCK,
+      marketScope: 'us_stocks',
+      t: dates.at(-1)!,
+    })).metrics)
+
+    const expectedZ = newNoise / sampleStd(noise)
+    closeTo(metrics.get('resid_z_spy')?.value, expectedZ)
+    // vadj divides by sqrt(relative dollar volume); volume is constant, so
+    // dv is proportional to close and rvol = close_0 / mean(close_1..21).
+    const closesDesc = [...stockCloses].reverse()
+    const rvol = closesDesc[0] /
+      (closesDesc.slice(1, 22).reduce((sum, value) => sum + value, 0) / 21)
+    closeTo(
+      metrics.get('resid_z_vadj_spy')?.value,
+      expectedZ / Math.sqrt(rvol),
+    )
   })
 })

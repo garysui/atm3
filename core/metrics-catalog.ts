@@ -7,6 +7,7 @@ export const metricFamilies = [
   'volume',
   'events',
   'context',
+  'surprise',
   'session',
 ] as const
 
@@ -88,6 +89,20 @@ export const metricsCatalog = [
   { id: 'resid_ret_21_tracking', family: 'context', window: 21, min_bars: 64, available_at: close, basis: 'adj', unit: 'ratio', description: 'Twenty-one-bar residual return versus the tracking ETF.' },
   { id: 'resid_ret_63_tracking', family: 'context', window: 63, min_bars: 64, available_at: close, basis: 'adj', unit: 'ratio', description: 'Sixty-three-bar residual return versus the tracking ETF.' },
   { id: 'idio_vol_63_tracking', family: 'context', window: 63, min_bars: 64, available_at: close, basis: 'adj', unit: 'annualized', description: 'Annualized residual volatility versus the tracking ETF.' },
+
+  // Surprise layer (VT-P6): today's action standardized against the
+  // instrument's OWN trailing distribution, denominators anchored at T-1 so
+  // today never contaminates its own sigma. The two residual z-scores are
+  // context-family (baseline-dependent, null for scopes without one).
+  { id: 'resid_z_spy', family: 'context', window: 63, min_bars: 65, available_at: close, basis: 'adj', unit: 'sigma', description: 'Today residual return over the residual sigma of the 63 pairs ending yesterday.' },
+  { id: 'resid_z_vadj_spy', family: 'context', window: 63, min_bars: 65, available_at: close, basis: 'adj', unit: 'sigma', description: 'Residual z divided by the square root of relative dollar volume (volume as the clock).' },
+  { id: 'yz_vol_21d', family: 'volatility', window: 21, min_bars: 22, available_at: close, basis: 'adj', unit: 'annualized', description: 'Yang-Zhang annualized volatility: overnight plus open-close plus Rogers-Satchell terms.' },
+  { id: 'range_med_21d', family: 'surprise', window: 21, min_bars: 22, available_at: close, basis: 'adj', unit: 'ratio', description: 'Median relative range (high minus low over previous close) of the 21 bars ending yesterday.' },
+  { id: 'range_surprise', family: 'surprise', window: 21, min_bars: 22, available_at: close, basis: 'adj', unit: 'ratio', description: 'Today relative range over its trailing median — travel versus this name\'s normal day.' },
+  { id: 'ret_z_21d', family: 'surprise', window: 21, min_bars: 22, available_at: close, basis: 'adj', unit: 'sigma', description: 'Today log return over yesterday-anchored daily Parkinson sigma.' },
+  { id: 'ret_z_vadj_21d', family: 'surprise', window: 21, min_bars: 22, available_at: close, basis: 'dollar', unit: 'sigma', description: 'Return z divided by the square root of relative dollar volume.' },
+  { id: 'ret_pctile_252d', family: 'surprise', window: 252, min_bars: 253, available_at: close, basis: 'adj', unit: 'share', description: 'Empirical percentile of today log return within the 252 returns ending yesterday.' },
+  { id: 'ret_kurt_252d', family: 'surprise', window: 252, min_bars: 253, available_at: close, basis: 'adj', unit: 'ratio', description: 'Excess kurtosis of the 252 log returns ending yesterday — how literally to read sigma bands.' },
 ] as const satisfies readonly MetricCatalogEntry[]
 
 export type MetricId = (typeof metricsCatalog)[number]['id']

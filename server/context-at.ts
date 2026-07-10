@@ -226,6 +226,22 @@ export async function contextAt(
         trackingOutcome?.reason ?? 'undefined_input',
       )
 
+  // Yesterday-anchored residual surprise vs SPY. Null resid_z with full
+  // stats means the 64th aligned pair does not exist yet.
+  metrics.resid_z_spy =
+    spyStats !== null && spyStats.resid_z !== null
+      ? {
+          value: spyStats.resid_z,
+          bars_available: spyStats.bars_available,
+          reason: null,
+        }
+      : emptyMetric(
+          spyOutcome?.bars_available ?? 0,
+          spyStats !== null
+            ? 'insufficient_window'
+            : spyOutcome?.reason ?? 'undefined_input',
+        )
+
   return {
     metrics,
     baselines: {
