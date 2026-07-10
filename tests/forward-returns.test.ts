@@ -28,11 +28,11 @@ test('forward returns are anchor-invariant and hand-check both entry bases', asy
         ('XSHE', 'Shenzhen', 'cn_stocks', 'cn_equities', 'Asia/Shanghai', 'CNY');
       insert into facts.instruments (
         instrument_id, asset_class, instrument_type, name,
-        primary_market_scope, currency, active
+        primary_market_scope, currency, active, delisted_date
       ) values
-        (cast('${US}' as uuid), 'equity', 'common_stock', 'US Fixture', 'us_stocks', 'USD', true),
-        (cast('${CN}' as uuid), 'equity', 'common_stock', 'CN Fixture', 'cn_stocks', 'CNY', true),
-        (cast('${ENDED}' as uuid), 'equity', 'common_stock', 'Ended Fixture', 'us_stocks', 'USD', false);
+        (cast('${US}' as uuid), 'equity', 'common_stock', 'US Fixture', 'us_stocks', 'USD', true, null),
+        (cast('${CN}' as uuid), 'equity', 'common_stock', 'CN Fixture', 'cn_stocks', 'CNY', true, null),
+        (cast('${ENDED}' as uuid), 'equity', 'common_stock', 'Ended Fixture', 'us_stocks', 'USD', false, date '2025-01-06');
       insert into facts.symbols (
         symbol_id, instrument_id, market_scope, symbol, valid_from, is_primary
       ) values
@@ -43,7 +43,7 @@ test('forward returns are anchor-invariant and hand-check both entry bases', asy
       select 'us_equities', d, true, 'fixture'
       from unnest([date '2025-01-02', date '2025-01-03', date '2025-01-06',
                    date '2025-01-07', date '2025-01-08', date '2025-01-09',
-                   date '2025-01-10']) dates(d)
+                   date '2025-01-10', date '2025-01-13']) dates(d)
       union all
       select 'cn_equities', d, true, 'fixture'
       from unnest([date '2025-01-02', date '2025-01-03', date '2025-01-06']) dates(d);
@@ -137,6 +137,8 @@ test('forward returns are anchor-invariant and hand-check both entry bases', asy
     assert.equal(delayedEntry[0].reason, 'no_entry_bar')
     closeTo(delayedEntry[1].ret, 11.2 / 11 - 1)
 
+    // Delisted comes from identity (delisted_date <= horizon), never from
+    // missing bars.
     const ended = await forwardReturns(db.connection, {
       instrumentId: ENDED, marketScope: 'us_stocks', t: '2025-01-02',
       horizons: [2], entryBasis: 't_close', policy: 'split_dividend',
@@ -145,6 +147,44 @@ test('forward returns are anchor-invariant and hand-check both entry bases', asy
     assert.equal(ended[0].delisted, true)
     assert.equal(ended[0].stale, false)
     closeTo(ended[0].ret, -0.1)
+
+    // A horizon past the last KNOWN bar of a live instrument is a stale
+    // carried valuation — the future has not happened; nothing is delisted.
+    const beyondData = await forwardReturns(db.connection, {
+      instrumentId: US, marketScope: 'us_stocks', t: '2025-01-09',
+      horizons: [1, 2], entryBasis: 't_close', policy: 'split_dividend',
+    })
+    assert.equal(beyondData[0].date, '2025-01-10')
+    assert.equal(beyondData[0].stale, false)
+    assert.equal(beyondData[1].date, '2025-01-13') // covered by the calendar
+    assert.equal(beyondData[1].stale, true) // valuation carried from 01-10
+    assert.equal(beyondData[1].delisted, false)
+    closeTo(beyondData[1].ret, 28 / 27 - 1)
+
+    // Horizons past the known calendar are per-row results, not a wholesale
+    // failure: near horizons still resolve at a recent T.
+    const partial = await forwardReturns(db.connection, {
+      instrumentId: US, marketScope: 'us_stocks', t: '2025-01-02',
+      horizons: [1, 99], entryBasis: 't_close', policy: 'split_dividend',
+      adjustmentAnchor: '2025-01-10',
+    })
+    closeTo(partial[0].ret, 0.04)
+    assert.deepEqual(partial[1], {
+      horizon: 99,
+      date: null,
+      ret: null,
+      mae: null,
+      mfe: null,
+      delisted: false,
+      stale: false,
+      bars_used: 0,
+      reason: 'beyond_calendar',
+    })
+    const allBeyond = await forwardReturns(db.connection, {
+      instrumentId: US, marketScope: 'us_stocks', t: '2025-01-10',
+      horizons: [5], entryBasis: 't_close', policy: 'split_dividend',
+    })
+    assert.equal(allBeyond[0].reason, 'beyond_calendar')
 
     const noEntry = await forwardReturns(db.connection, {
       instrumentId: ENDED, marketScope: 'us_stocks', t: '2025-01-03',

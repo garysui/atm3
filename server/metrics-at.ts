@@ -11,6 +11,15 @@ export type MetricReason =
   | 'insufficient_window'
   | 'undefined_input'
   | 'no_market_baseline'
+  | 'no_known_event'
+
+// Event metrics whose null means "no such event is knowable at T" — a
+// distinct honest state, not a computation failure.
+const noKnownEventIds = new Set<string>([
+  'days_since_split',
+  'days_since_dividend',
+  'declared_ex_days',
+])
 
 export type MetricAt = {
   id: MetricId
@@ -377,6 +386,8 @@ export async function metricsAt(
     } else if (definition.family === 'context') {
       reason = 'undefined_input'
       value = null
+    } else if (value === null && noKnownEventIds.has(definition.id)) {
+      reason = 'no_known_event'
     } else if (value === null) {
       reason = 'undefined_input'
     }

@@ -5,11 +5,14 @@ export const defaultForwardHorizons = [1, 5, 21, 63, 126, 252] as const
 
 export type ForwardEntryBasis = 'next_open' | 't_close'
 
-export type ForwardReturnReason = 'no_entry_bar'
+// no_entry_bar: the entry bar does not exist by the horizon date.
+// beyond_calendar: the horizon date is past the known trading calendar —
+// the row is present (never silently dropped) with a null date and return.
+export type ForwardReturnReason = 'no_entry_bar' | 'beyond_calendar'
 
 export type ForwardReturnRow = {
   horizon: number
-  date: string
+  date: string | null
   ret: number | null
   mae: number | null
   mfe: number | null
@@ -17,6 +20,20 @@ export type ForwardReturnRow = {
   stale: boolean
   bars_used: number
   reason?: ForwardReturnReason
+}
+
+export function beyondCalendarRow(horizon: number): ForwardReturnRow {
+  return {
+    horizon,
+    date: null,
+    ret: null,
+    mae: null,
+    mfe: null,
+    delisted: false,
+    stale: false,
+    bars_used: 0,
+    reason: 'beyond_calendar',
+  }
 }
 
 export class ViewAtTDateError extends Error {
@@ -135,10 +152,13 @@ export async function forwardReturns(
       checked.next_date === null ? null : String(checked.next_date),
     )
   }
-  if (Number(checked.target_count) !== horizons.length) {
-    throw new Error(
-      `trading calendar does not cover all horizons after ${options.t}`,
-    )
+  // Horizons past the known calendar are reported per-row (beyond_calendar),
+  // never a wholesale failure: at a recent T the near horizons still resolve.
+  const coveredCount = Number(checked.target_count)
+  const covered = horizons.slice(0, coveredCount)
+  const beyond = horizons.slice(coveredCount).map(beyondCalendarRow)
+  if (coveredCount === 0) {
+    return beyond
   }
 
   const maxTarget = String(checked.max_target)
@@ -147,9 +167,15 @@ export async function forwardReturns(
     throw new Error(`adjustment anchor ${anchor} is before horizon ${maxTarget}`)
   }
 
+  const coveredValues = covered.map((value) => `(${value})`).join(', ')
   const result = await connection.runAndReadAll(
     `
-      with horizons(horizon) as (values ${horizonValues}),
+      with horizons(horizon) as (values ${coveredValues}),
+      inst as (
+        select delisted_date
+        from facts.instruments
+        where instrument_id = cast($instrument_id as uuid)
+      ),
       calendar as (
         select min(calendar_id) as calendar_id
         from facts.exchanges where market_scope = $market_scope
@@ -209,20 +235,21 @@ export async function forwardReturns(
             or path.path_bars = 0 then null
           else path.max_high / e.price - 1
         end as mfe,
+        -- delisted comes from IDENTITY, never inferred from missing bars: a
+        -- horizon past the last known bar of an active instrument is a stale
+        -- (carried) valuation, not a delisting.
         case
           when e.market_date is null or e.market_date > t.market_date then false
           when valuation.market_date < t.market_date
-            and not exists(
-              select 1 from full_bars b where b.market_date > t.market_date
-            ) then true
+            and inst.delisted_date is not null
+            and inst.delisted_date <= t.market_date then true
           else false
         end as delisted,
         case
           when e.market_date is null or e.market_date > t.market_date then false
           when valuation.market_date < t.market_date
-            and exists(
-              select 1 from full_bars b where b.market_date > t.market_date
-            ) then true
+            and not (inst.delisted_date is not null
+                     and inst.delisted_date <= t.market_date) then true
           else false
         end as stale,
         case
@@ -236,6 +263,7 @@ export async function forwardReturns(
         end as reason
       from targets t
       cross join entry e
+      cross join inst
       left join lateral (
         select market_date, close
         from adjusted a
@@ -270,7 +298,7 @@ export async function forwardReturns(
     },
   )
 
-  return result.getRowObjectsJson().map((row) => ({
+  const rows = result.getRowObjectsJson().map((row) => ({
     horizon: Number(row.horizon),
     date: String(row.date),
     ret: row.ret === null ? null : Number(row.ret),
@@ -283,4 +311,5 @@ export async function forwardReturns(
       ? {}
       : { reason: String(row.reason) as ForwardReturnReason }),
   }))
+  return [...rows, ...beyond]
 }

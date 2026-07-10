@@ -313,7 +313,7 @@ test('all non-context formulas match visible independent arithmetic', async () =
       instrumentId: US, marketScope: 'us_stocks', t,
     })).metrics).get('declared_ex_days')
     assert.equal(hidden?.value, null)
-    assert.equal(hidden?.reason, 'undefined_input')
+    assert.equal(hidden?.reason, 'no_known_event')
 
     const cnCalendar = dates.slice(196, 260)
     const cnBars = cnCalendar.filter((date) => date !== dates[230])
