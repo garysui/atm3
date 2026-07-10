@@ -359,3 +359,12 @@ when: the structural acceptance contract below passes end to end.
   bonus/conversion action display; the browser console was clean. Rights
   issues, complete historical names, CN minutes, BSE, and a whole-market
   backfill remain explicitly deferred.
+- 2026-07-10, post-review hardening: the six CN raw-ingest pipeline steps
+  are `continueOnError` — a BaoStock outage records a failed card but no
+  longer fail-fasts the shared run-all chain, so the US facts build still
+  runs that day; any resulting CN coverage gap is reported by
+  `verify:continuity` and back-filled by the next successful ingest. The
+  US builders' full-refresh deletes are now scoped like the CN builders'
+  (identity to `us_stocks`/`polygon`; exchanges by exclusion, since the
+  Polygon snapshot also carries `us_options`/`global_*` scopes), so a
+  standalone builder run can never drop another market's facts.

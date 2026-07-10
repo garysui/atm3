@@ -39,7 +39,12 @@ export async function buildExchanges(
   const ctx = context(connection, options)
 
   await inTransaction(ctx, async () => {
-    await ctx.connection.run('delete from facts.exchanges')
+    // This builder owns every scope in the polygon exchanges snapshot
+    // (us_* and global_*); scopes owned by other market builders are
+    // excluded so a standalone run cannot drop their rows.
+    await ctx.connection.run(
+      "delete from facts.exchanges where market_scope <> 'cn_stocks'",
+    )
 
     if (!(await datasetHasFiles(ctx, 'exchanges'))) {
       return
@@ -201,9 +206,18 @@ export async function buildIdentity(
   const hasEvents = await datasetHasFiles(ctx, 'ticker_events')
 
   await inTransaction(ctx, async () => {
-    await ctx.connection.run('delete from facts.instruments')
-    await ctx.connection.run('delete from facts.symbols')
-    await ctx.connection.run('delete from facts.instrument_identifiers')
+    // Scoped to what this builder inserts (us_stocks / polygon) so a
+    // standalone run cannot drop other markets' identity — mirrors the
+    // per-source deletes in facts-build-cn.
+    await ctx.connection.run(
+      "delete from facts.instruments where primary_market_scope = 'us_stocks'",
+    )
+    await ctx.connection.run(
+      "delete from facts.symbols where market_scope = 'us_stocks'",
+    )
+    await ctx.connection.run(
+      "delete from facts.instrument_identifiers where source_id = 'polygon'",
+    )
     await ctx.connection.run(
       "delete from ops.unresolved where dataset = 'reference_tickers'",
     )

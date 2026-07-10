@@ -178,6 +178,52 @@ test('run-all fails fast: a failed step skips the rest of its chain', async () =
   })
 })
 
+test('a continueOnError step records its failure without skipping the chain', async () => {
+  await withTempDatabase(async (db) => {
+    const log: string[] = []
+    const steps: OperationStep[] = [
+      {
+        id: 'op:cn-boom',
+        label: 'cn boom',
+        stage: 'raw',
+        description: 'soft-fails like a BaoStock outage',
+        continueOnError: true,
+        run: async () => {
+          throw new Error('vendor unreachable')
+        },
+      },
+      {
+        id: 'op:downstream',
+        label: 'downstream',
+        stage: 'facts',
+        description: 'must still run: facts rebuild from the previous raw',
+        run: async () => {
+          log.push('downstream')
+        },
+      },
+    ]
+    const controller = createOperationsController(db, steps)
+
+    controller.enqueueAll()
+    await waitForIdle(controller)
+
+    const status = controller.status()
+    assert.equal(status['op:cn-boom']?.state, 'failed')
+    assert.match(String(status['op:cn-boom']?.error), /vendor unreachable/)
+    assert.equal(status['op:downstream']?.state, 'ok')
+    assert.deepEqual(log, ['downstream'])
+
+    // The failure is still durably recorded in run history.
+    const runs = await db.connection.runAndReadAll(`
+      select status from ops.runs where job = 'op:cn-boom'
+    `)
+    assert.deepEqual(
+      runs.getRowObjectsJson().map((row) => row.status),
+      ['failed'],
+    )
+  })
+})
+
 test('operation can report an intentional skip with a reason', async () => {
   await withTempDatabase(async (db) => {
     const controller = createOperationsController(db, [

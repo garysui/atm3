@@ -4,7 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { Atm3Db } from '../server/db.ts'
-import { buildAllFacts } from '../server/facts-build.ts'
+import {
+  buildAllFacts,
+  buildExchanges,
+  buildIdentity,
+} from '../server/facts-build.ts'
 import { landRawFile } from '../server/raw-zone.ts'
 import { withTempDatabase } from './helpers.ts'
 
@@ -492,4 +496,62 @@ test('facts builders: identity, chaining, bars, actions, calendar, determinism',
   } finally {
     await rm(dataDir, { recursive: true, force: true })
   }
+})
+
+test('US builders scope their deletes: other markets survive standalone runs', async () => {
+  await withTempDatabase(async (db) => {
+    const cn = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    await db.connection.run(`
+      insert into facts.exchanges (
+        exchange_mic, name, exchange_type, market_scope, calendar_id,
+        timezone, country, currency
+      ) values (
+        'XSHG', 'Shanghai Stock Exchange', 'exchange', 'cn_stocks',
+        'cn_equities', 'Asia/Shanghai', 'CN', 'CNY'
+      );
+      insert into facts.instruments (
+        instrument_id, asset_class, instrument_type, name,
+        primary_market_scope, currency
+      ) values (
+        cast('${cn}' as uuid), 'equity', 'common_stock', 'CN Fixture',
+        'cn_stocks', 'CNY'
+      );
+      insert into facts.symbols (
+        symbol_id, instrument_id, market_scope, symbol, exchange_mic,
+        valid_from, is_primary
+      ) values (
+        cast('dddddddd-dddd-4ddd-8ddd-dddddddddddd' as uuid),
+        cast('${cn}' as uuid), 'cn_stocks', '600519', 'XSHG',
+        date '2001-08-27', true
+      );
+      insert into facts.instrument_identifiers (
+        identifier_type, identifier_value, valid_from, instrument_id, source_id
+      ) values (
+        'baostock_code', 'sh.600519', date '2001-08-27',
+        cast('${cn}' as uuid), 'baostock'
+      )
+    `)
+
+    // No raw datasets exist, so both builders run their delete phase and
+    // return — exactly the path that used to wipe other markets' rows.
+    await buildExchanges(db.connection)
+    await buildIdentity(db.connection)
+
+    const survivors = await db.connection.runAndReadAll(`
+      select
+        (select count(*) from facts.exchanges where market_scope = 'cn_stocks') as exchanges,
+        (select count(*) from facts.instruments where primary_market_scope = 'cn_stocks') as instruments,
+        (select count(*) from facts.symbols where market_scope = 'cn_stocks') as symbols,
+        (select count(*) from facts.instrument_identifiers where source_id = 'baostock') as identifiers
+    `)
+    assert.deepEqual(
+      survivors.getRowObjectsJson().map((row) => ({
+        exchanges: Number(row.exchanges),
+        instruments: Number(row.instruments),
+        symbols: Number(row.symbols),
+        identifiers: Number(row.identifiers),
+      })),
+      [{ exchanges: 1, instruments: 1, symbols: 1, identifiers: 1 }],
+    )
+  })
 })

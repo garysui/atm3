@@ -37,6 +37,11 @@ export type OperationStep = {
   label: string
   stage: 'raw' | 'facts' | 'computed' | 'verify'
   description: string
+  // A failing step normally cancels the rest of its chain. Steps whose
+  // absence downstream stages tolerate (CN raw ingest: facts rebuild from
+  // the previous snapshot and verify:continuity reports the gap) instead
+  // record the failure and let the chain continue.
+  continueOnError?: boolean
   run: (context: { db: Atm3Db; runId: string }) => Promise<unknown>
 }
 
@@ -146,6 +151,7 @@ export const dailyReplenishSteps: OperationStep[] = [
     id: 'ingest:baostock:trade_cal',
     label: 'CN calendar',
     stage: 'raw',
+    continueOnError: true,
     description: 'BaoStock cn_equities calendar snapshot',
     run: cnOperation(({ db, runId }) => ingestBaoStockCalendar(db, { runId })),
   },
@@ -153,6 +159,7 @@ export const dailyReplenishSteps: OperationStep[] = [
     id: 'ingest:baostock:universe',
     label: 'CN universe',
     stage: 'raw',
+    continueOnError: true,
     description: 'BaoStock listed-security snapshot for identity evidence',
     run: cnOperation(({ db, runId }) => ingestBaoStockUniverse(db, { runId })),
   },
@@ -160,6 +167,7 @@ export const dailyReplenishSteps: OperationStep[] = [
     id: 'ingest:baostock:stock_basic',
     label: 'CN instrument basics',
     stage: 'raw',
+    continueOnError: true,
     description: 'metadata for the owner-vetoable prototype code list',
     run: cnOperation(({ db, runId }) => ingestBaoStockBasics(db, { runId })),
   },
@@ -167,6 +175,7 @@ export const dailyReplenishSteps: OperationStep[] = [
     id: 'ingest:baostock:daily_k',
     label: 'CN daily bars',
     stage: 'raw',
+    continueOnError: true,
     description: 'unadjusted per-code daily windows for the prototype',
     run: cnOperation(({ db, runId }) => ingestBaoStockDaily(db, { runId })),
   },
@@ -174,6 +183,7 @@ export const dailyReplenishSteps: OperationStep[] = [
     id: 'ingest:baostock:dividend',
     label: 'CN distributions',
     stage: 'raw',
+    continueOnError: true,
     description: 'per-code implemented cash and stock distributions',
     run: cnOperation(({ db, runId }) => ingestBaoStockDividends(db, { runId })),
   },
@@ -181,6 +191,7 @@ export const dailyReplenishSteps: OperationStep[] = [
     id: 'ingest:baostock:adj_factor',
     label: 'CN vendor factors',
     stage: 'raw',
+    continueOnError: true,
     description: 'BaoStock price-change factors for diagnostics only',
     run: cnOperation(({ db, runId }) =>
       ingestBaoStockAdjustmentFactors(db, { runId }),
@@ -253,7 +264,9 @@ export function createOperationsController(
 
   // A failed step cancels the rest of its chain: rebuilding facts and
   // caches from a failed ingest would spend minutes laundering stale input
-  // (review finding #4). Individually queued steps are unaffected.
+  // (review finding #4). Steps marked continueOnError (CN raw ingest) are
+  // the exception — see OperationStep. Individually queued steps are
+  // unaffected.
   function skipChain(chainId: string, failedId: string): void {
     for (let index = queue.length - 1; index >= 0; index--) {
       if (queue[index].chainId === chainId) {
@@ -330,7 +343,7 @@ export function createOperationsController(
           })
           logger.error({ id: item.id, error }, 'operation failed')
 
-          if (item.chainId) {
+          if (item.chainId && !step.continueOnError) {
             skipChain(item.chainId, item.id)
           }
         }
