@@ -35,7 +35,7 @@ export type ChartBar = {
 
 export type ChartEvent = {
   date: string
-  kind: 'split' | 'dividend' | 'rename'
+  kind: 'split' | 'stockDividend' | 'dividend' | 'rename'
   text: string
 }
 
@@ -195,6 +195,15 @@ function toMarkers(events: ChartEvent[], bars: ChartBar[]): SeriesMarker<Time>[]
         shape: 'arrowDown',
         text: event.text,
         size: 1.4,
+      })
+    } else if (event.kind === 'stockDividend') {
+      markers.push({
+        time: barDate as Time,
+        position: 'aboveBar',
+        color: '#e08a00',
+        shape: 'circle',
+        text: event.text,
+        size: 1.1,
       })
     } else if (event.kind === 'rename') {
       markers.push({

@@ -221,6 +221,7 @@ export async function createApiServer(
           `
             select action_type, cast(ex_date as varchar) as ex_date,
                    symbol_as_stated, split_from, split_to, cash_amount,
+                   cash_amount_post_tax, bonus_ratio, conversion_ratio,
                    currency, dividend_type,
                    cast(pay_date as varchar) as pay_date
             from facts.corporate_actions

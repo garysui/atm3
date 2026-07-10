@@ -8,6 +8,8 @@ import { createApiServer } from '../server/api.ts'
 import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 import { A, seedFacts } from './fixtures.ts'
 
+const CN = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+
 test('api serves health, scopes, search, detail, and policy bars', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atm3-api-'))
   const dbPath = path.join(dir, 'atm3.duckdb')
@@ -19,6 +21,39 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
   const mintedId = await (async () => {
     try {
       await seedFacts(writer)
+      await writer.connection.run(`
+        insert into facts.instruments (
+          instrument_id, asset_class, instrument_type, name,
+          primary_market_scope, primary_exchange_mic, currency
+        ) values (
+          cast('${CN}' as uuid), 'equity', 'common_stock', '贵州茅台',
+          'cn_stocks', 'XSHG', 'CNY'
+        );
+        insert into facts.symbols (
+          symbol_id, instrument_id, market_scope, symbol, exchange_mic,
+          valid_from, is_primary
+        ) values (
+          cast('dddddddd-dddd-4ddd-8ddd-dddddddddddd' as uuid),
+          cast('${CN}' as uuid), 'cn_stocks', '600519', 'XSHG',
+          date '2001-08-27', true
+        );
+        insert into facts.bars_daily (
+          source_id, instrument_id, market_date, market_scope, symbol_as_traded,
+          open, high, low, close, volume
+        ) values
+          ('baostock', cast('${CN}' as uuid), date '2025-01-02',
+           'cn_stocks', '600519', 100, 100, 100, 100, 1000),
+          ('baostock', cast('${CN}' as uuid), date '2025-01-03',
+           'cn_stocks', '600519', 99, 99, 99, 99, 1100);
+        insert into facts.corporate_actions (
+          source_id, source_action_id, instrument_id, market_scope,
+          symbol_as_stated, action_type, ex_date, cash_amount,
+          cash_amount_post_tax, currency
+        ) values (
+          'baostock', 'cn-cash', cast('${CN}' as uuid), 'cn_stocks',
+          '600519', 'cash_dividend', date '2025-01-03', 1, 0.9, 'CNY'
+        )
+      `)
       const minted = await writer.connection.runAndReadAll(`
         select cast(deterministic_uuid('instrument', 'apitest') as varchar) as id
       `)
@@ -67,7 +102,18 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     const scopes = (await (await fetch(`${base}/api/scopes`)).json()) as Array<{
       scope: string
     }>
-    assert.deepEqual(scopes, [{ scope: 'us_stocks' }])
+    assert.deepEqual(scopes, [{ scope: 'cn_stocks' }, { scope: 'us_stocks' }])
+
+    const cnByCode = (await (
+      await fetch(`${base}/api/instruments?scope=cn_stocks&q=600519`)
+    ).json()) as Array<Record<string, unknown>>
+    assert.equal(cnByCode[0]?.instrument_id, CN)
+    const cnByName = (await (
+      await fetch(
+        `${base}/api/instruments?scope=cn_stocks&q=${encodeURIComponent('贵州茅台')}`,
+      )
+    ).json()) as Array<Record<string, unknown>>
+    assert.equal(cnByName[0]?.symbol, '600519')
 
     const found = (await (
       await fetch(`${base}/api/instruments?scope=us_stocks&q=AAA`)
@@ -101,6 +147,11 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     assert.equal(detail.symbols.length, 2) // AAAOLD (historical) + AAA (current)
     assert.equal(detail.corporateActions.length, 7)
     assert.equal(Number(detail.barsSummary.bars), 3)
+
+    const cnDetail = (await (
+      await fetch(`${base}/api/instruments/${CN}`)
+    ).json()) as { corporateActions: Array<Record<string, unknown>> }
+    assert.equal(cnDetail.corporateActions[0]?.cash_amount_post_tax, 0.9)
 
     const barsFor = async (query: string) =>
       (await (

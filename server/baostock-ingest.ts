@@ -150,11 +150,23 @@ async function latestWindowEnd(
 ): Promise<string | null> {
   const result = await connection.runAndReadAll(
     `
-      select max(json_extract_string(request_params, '$.end_date')) as end_date
-      from raw.fetches
-      where source_id = 'baostock'
-        and dataset = $dataset
-        and json_extract_string(request_params, '$.code') = $code
+      with windows as (
+        select
+          json_extract_string(request_params, '$.end_date') as end_date,
+          count(*) as actual_frames,
+          max(try_cast(json_extract_string(request_params, '$.frame_count')
+                       as integer)) as expected_frames
+        from raw.fetches
+        where source_id = 'baostock'
+          and dataset = $dataset
+          and json_extract_string(request_params, '$.code') = $code
+        group by
+          json_extract_string(request_params, '$.start_date'),
+          json_extract_string(request_params, '$.end_date')
+      )
+      select max(end_date) as end_date
+      from windows
+      where expected_frames > 0 and actual_frames = expected_frames
     `,
     { dataset, code },
   )

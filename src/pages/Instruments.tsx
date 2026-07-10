@@ -195,19 +195,33 @@ export function Instruments({
       return []
     }
 
-    return detail.corporateActions.map((action) =>
-      action.action_type === 'split'
-        ? {
-            date: String(action.ex_date),
-            kind: 'split' as const,
-            text: `S ${action.split_from}:${action.split_to}`,
-          }
-        : {
-            date: String(action.ex_date),
-            kind: 'dividend' as const,
-            text: `D ${action.cash_amount}`,
-          },
-    )
+    return detail.corporateActions.flatMap((action): ChartEvent[] => {
+      if (action.action_type === 'split') {
+        return [{
+          date: String(action.ex_date),
+          kind: 'split',
+          text: `S ${action.split_from}:${action.split_to}`,
+        }]
+      }
+      if (action.action_type === 'stock_dividend') {
+        const ratio =
+          Number(action.bonus_ratio ?? 0) +
+          Number(action.conversion_ratio ?? 0)
+        return [{
+          date: String(action.ex_date),
+          kind: 'stockDividend',
+          text: `SD +${ratio}`,
+        }]
+      }
+      if (action.action_type === 'cash_dividend') {
+        return [{
+          date: String(action.ex_date),
+          kind: 'dividend',
+          text: `D ${String(action.currency ?? '')} ${action.cash_amount}`.trim(),
+        }]
+      }
+      return []
+    })
   }, [detail])
 
   const firstBarFactor = bars?.bars[0]?.cum_price_factor

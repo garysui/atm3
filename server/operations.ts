@@ -3,6 +3,7 @@ import { logger } from './log.ts'
 import { withRun } from './runs.ts'
 import { buildAllFacts } from './facts-build.ts'
 import {
+  cnBackfillWindow,
   cnSourceEnabled,
   ingestBaoStockAdjustmentFactors,
   ingestBaoStockBasics,
@@ -215,10 +216,12 @@ export const dailyReplenishSteps: OperationStep[] = [
       'contract: every trading day covered from the fixed start; closures uncontradicted',
     run: async ({ db }) => {
       const { from, to } = backfillWindow()
+      const cnWindow = cnSourceEnabled() ? cnBackfillWindow() : undefined
       const report = await verifyContinuity(db.connection, {
         dailyFrom: from,
         intradayFrom: intradayBackfillWindow().from,
         to,
+        cn: cnWindow,
       })
 
       if (!report.ok) {

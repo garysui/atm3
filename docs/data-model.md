@@ -11,11 +11,12 @@ disposable index over `data/raw/`.
 
 ```mermaid
 flowchart TD
-  vendor(["Polygon.io"])
+  vendors(["Polygon.io · BaoStock"])
 
   subgraph RAW["1 · raw — untouched truth, append-only files"]
-    ingest["npm run ingest:polygon:*<br/>idempotent, resumable"]
-    files["data/raw/&lt;source&gt;/&lt;dataset&gt;/…<br/>REST json.gz · flat-file csv.gz · .meta.json manifests"]
+    ingest["source connectors<br/>idempotent, resumable"]
+    relay["BaoStock Python relay<br/>acquisition only"]
+    files["data/raw/&lt;source&gt;/&lt;dataset&gt;/…<br/>REST/flat files · protocol frames · .meta.json manifests"]
     fetches[("raw.fetches — index of manifests<br/>rebuild anytime: npm run raw:reindex")]
   end
 
@@ -44,7 +45,9 @@ flowchart TD
     unresolved[("unresolved — quarantine,<br/>never guessed")]
   end
 
-  vendor -->|verbatim bytes| ingest
+  vendors -->|HTTP/S3| ingest
+  vendors -->|anonymous protocol| relay
+  relay -->|verbatim frames| ingest
   ingest --> files
   files --> fetches
   files -->|read_json, parsed in place| FACTS

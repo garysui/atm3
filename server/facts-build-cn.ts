@@ -784,3 +784,146 @@ export async function stageCnVendorAdjustmentFactors(
   )
   return { vendorFactorRows, invalidVendorFactorRows }
 }
+
+// Generic raw-coverage staging for the continuity contract. BaoStock response
+// positions and manifest parameter names stay here; the verifier consumes only
+// vendor_code/date/traded/suspended and normalized request windows.
+export async function stageCnDailyCoverage(
+  connection: DuckDBConnection,
+  options: BuildOptions = {},
+): Promise<{ dailyRows: number; rawWindows: number; invalidRows: number }> {
+  const ctx = context(connection, options)
+  const hasDaily = await datasetHasFiles(ctx, 'daily_k', 'baostock')
+
+  await ctx.connection.run(`
+    create or replace temp table t_cn_daily_coverage (
+      vendor_code varchar,
+      market_date date,
+      is_traded boolean,
+      is_suspended boolean
+    );
+    create or replace temp table t_cn_daily_raw_windows (
+      vendor_code varchar,
+      window_start date,
+      window_end date
+    );
+    create or replace temp table t_cn_daily_coverage_invalid (
+      vendor_code varchar,
+      market_date_text varchar,
+      reason varchar
+    )
+  `)
+  if (!hasDaily) {
+    return { dailyRows: 0, rawWindows: 0, invalidRows: 0 }
+  }
+
+  await ctx.connection.run(`
+    create or replace temp table t_cn_daily_windows_parsed as
+    select
+      json_extract_string(request_params, '$.code') as vendor_code,
+      json_extract_string(request_params, '$.start_date') as start_text,
+      json_extract_string(request_params, '$.end_date') as end_text,
+      try_cast(json_extract_string(request_params, '$.start_date') as date)
+        as window_start,
+      try_cast(json_extract_string(request_params, '$.end_date') as date)
+        as window_end,
+      count(*) as actual_frames,
+      max(try_cast(json_extract_string(request_params, '$.frame_count')
+                   as integer)) as expected_frames
+    from raw.fetches
+    where source_id = 'baostock' and dataset = 'daily_k'
+    group by all
+  `)
+  await ctx.connection.run(`
+    insert into t_cn_daily_raw_windows
+    select vendor_code, window_start, window_end
+    from t_cn_daily_windows_parsed
+    where regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+      and window_start is not null
+      and window_end is not null
+      and window_start <= window_end
+      and expected_frames > 0
+      and actual_frames = expected_frames
+  `)
+  await ctx.connection.run(`
+    insert into t_cn_daily_coverage_invalid
+    select
+      coalesce(vendor_code, '(blank)'),
+      coalesce(start_text, '') || '..' || coalesce(end_text, ''),
+      case
+        when expected_frames is null or expected_frames <= 0
+          then 'missing_frame_count'
+        when actual_frames <> expected_frames then 'incomplete_raw_window'
+        else 'invalid_raw_window'
+      end
+    from t_cn_daily_windows_parsed
+    where not regexp_full_match(coalesce(vendor_code, ''), '(sh|sz)\\.[0-9]{6}')
+       or window_start is null
+       or window_end is null
+       or window_start > window_end
+       or expected_frames is null
+       or expected_frames <= 0
+       or actual_frames <> expected_frames
+  `)
+
+  await ctx.connection.run(`
+    create or replace temp table t_cn_daily_coverage_parsed as
+    with ${frameRecords(ctx, 'baostock/daily_k/*/*/*.frame')}
+    select
+      trim(r[2]) as vendor_code,
+      trim(r[1]) as market_date_text,
+      try_cast(trim(r[1]) as date) as market_date,
+      trim(r[12]) as trade_status,
+      try_cast(nullif(trim(r[8]), '') as double) as volume,
+      filename
+    from frame_records
+  `)
+  await ctx.connection.run(`
+    insert into t_cn_daily_coverage_invalid
+    select
+      coalesce(nullif(vendor_code, ''), '(blank)'), market_date_text,
+      case
+        when not regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+          then 'invalid_vendor_code'
+        when market_date is null then 'invalid_market_date'
+        when trade_status not in ('0', '1') then 'invalid_trade_status'
+        else 'traded_without_volume'
+      end
+    from t_cn_daily_coverage_parsed
+    where not regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+       or market_date is null
+       or trade_status not in ('0', '1')
+       or (trade_status = '1' and coalesce(volume, 0) <= 0)
+  `)
+  await ctx.connection.run(`
+    insert into t_cn_daily_coverage
+    select
+      vendor_code,
+      market_date,
+      trade_status = '1' and volume > 0,
+      trade_status = '0'
+    from t_cn_daily_coverage_parsed
+    where regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+      and market_date is not null
+      and trade_status in ('0', '1')
+      and (trade_status = '0' or volume > 0)
+    qualify row_number() over (
+      partition by vendor_code, market_date order by filename desc
+    ) = 1
+  `)
+
+  return {
+    dailyRows: await count(
+      ctx,
+      'select count(*) as n from t_cn_daily_coverage',
+    ),
+    rawWindows: await count(
+      ctx,
+      'select count(*) as n from t_cn_daily_raw_windows',
+    ),
+    invalidRows: await count(
+      ctx,
+      'select count(*) as n from t_cn_daily_coverage_invalid',
+    ),
+  }
+}

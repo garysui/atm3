@@ -1,8 +1,9 @@
 # atm3 Bootstrap Plan
 
-Status: M0–M1 done, M2 next. The owner's bootstrap sequence: (1) tech stack
-specs, (2) data modeling/ERDs, (3) raw data ingestion, (4) computation over raw
-data. Strategies/backtesting come only after the data foundation works.
+Status: M0–M6 and the CN structural prototype are complete. The owner's
+bootstrap sequence was: (1) tech stack specs, (2) data modeling/ERDs, (3) raw
+data ingestion, (4) computation over raw data. Strategy/backtest work can now
+begin on the source-neutral research contract below.
 
 Non-goal: no data is migrated from atm2 or any prior system. atm2's databases
 and downloaded files are not sources of truth — every byte enters through raw
@@ -214,7 +215,26 @@ by action structure; they are never used as a blanket pass/fail threshold. The
 live `adjust_v3` cache contains 5,741,773 canonical rows under each existing
 policy (1,605 split, 7 stock-distribution, and 75,159 cash factor events).
 
-Next: CN-P4 API/UI surfaces and the cross-market continuity contract.
+### CN-P4 — surfaces and cross-market contract
+
+Status: done 2026-07-10. The existing market selector discovers `cn_stocks`;
+instrument search preserves leading-zero codes and matches current Chinese
+names. CN detail pages use the same adjusted-bar chart and show cash,
+post-tax-cash, bonus, and conversion action fields, including distinct cash
+and stock-distribution markers.
+
+`npm run verify:continuity` is green across both markets: CN has 42 codes, 739
+calendar days, 491 open days, 19,749 raw coverage rows, 19,642 traded fact
+bars, and 107 suspensions, with zero window gaps, missing raw open-day rows,
+missing traded fact bars, invalid rows, or closure contradictions. The US
+contract remains green for 507 open days plus 22 closures and four complete
+intraday days.
+
+`npm run verify:cn-contract` runs one source-neutral 20-observation
+`split_dividend` return-series function for AAPL and 600519. Both return the
+same columns and semantics; only instrument id and market scope change. Live
+browser checks covered code/name search, Moutai cash actions, BYD's mixed
+cash/bonus/conversion event, and a clean console.
 
 ## Later (explicitly out of scope now)
 
@@ -269,6 +289,7 @@ Locked before any strategy/backtest code exists:
    received, split share scaling) — the forward-return function is built on
    these primitives in the research phase.
 
-## Open questions for the owner
+## Next owner decision
 
-1. Any desire to bring CN/Tushare in earlier than "after M4"?
+Choose the first research/backtest slice. Expansion beyond the 42-code CN
+prototype and a production CN vendor decision remain separate commitments.

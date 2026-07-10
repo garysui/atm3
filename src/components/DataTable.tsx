@@ -1,6 +1,19 @@
 import type { Row } from '../api.ts'
 
-function formatCell(value: unknown): { text: string; numeric: boolean } {
+const literalStringColumns = new Set([
+  'symbol',
+  'symbol_as_stated',
+  'symbol_as_traded',
+  'identifier_value',
+  'vendor_code',
+  'old_symbol',
+  'new_symbol',
+])
+
+function formatCell(
+  column: string,
+  value: unknown,
+): { text: string; numeric: boolean } {
   if (value === null || value === undefined) {
     return { text: '', numeric: false }
   }
@@ -9,7 +22,11 @@ function formatCell(value: unknown): { text: string; numeric: boolean } {
     return { text: value.toLocaleString('en-US'), numeric: true }
   }
 
-  if (typeof value === 'string' && /^-?\d+$/.test(value)) {
+  if (
+    typeof value === 'string' &&
+    !literalStringColumns.has(column) &&
+    /^-?\d+$/.test(value)
+  ) {
     // DuckDB bigints arrive as strings; render them as numbers.
     return { text: Number(value).toLocaleString('en-US'), numeric: true }
   }
@@ -51,7 +68,7 @@ export function DataTable({
             onClick={onRowClick ? () => onRowClick(row) : undefined}
           >
             {columns.map((column) => {
-              const cell = formatCell(row[column])
+              const cell = formatCell(column, row[column])
               return (
                 <td key={column} className={cell.numeric ? 'num' : undefined}>
                   {cell.text}

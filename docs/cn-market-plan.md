@@ -1,10 +1,9 @@
 # CN stock market plan (cn_stocks) — v2, structural prototype
 
-Status: PLAN v2, 2026-07-10 — revised per external review and new owner
-constraints. Supersedes v1 (which targeted Tushare; retained as a future
-connector in the appendix). Written for hand-off: identity keys, action
-ids, canonical-source policy, and relay boundaries are DECIDED here, not
-left to the engineer.
+Status: IMPLEMENTED v2, 2026-07-10 — structural prototype CN-P0 through
+CN-P4 complete. Supersedes v1 (which targeted Tushare; retained as a future
+connector in the appendix). Identity keys, action ids, canonical-source
+policy, and relay boundaries are implemented as specified below.
 
 ## Goal and constraints (owner)
 
@@ -276,14 +275,15 @@ when: the structural acceptance contract below passes end to end.
   suspension tradability) — enters as market/execution constraints keyed by
   market_scope, never per-source strategy branches (finding #16).
 
-## Owner decisions (only true owner calls; all else is decided above)
+## Resolved owner decisions
 
-1. Approve BaoStock (Alpha, no SLA, anonymous) as the prototype source
-   under constraint #1? [plan assumes yes]
-2. CN prototype window: 2024-07-01, matching US? [recommended yes]
-3. Prototype universe list sign-off once curated (criteria above).
-4. Keep policy name `split_dividend` meaning "all capital adjustments"?
-   [recommended keep]
+1. BaoStock 0.9.2 (Alpha, no SLA, anonymous) is approved for this structural
+   prototype only.
+2. The CN prototype window starts 2024-07-01, matching US coverage.
+3. The curated 42-code universe is accepted as the prototype sample; expansion
+   requires a separate review.
+4. `split_dividend` keeps its existing meaning: structure plus cash capital
+   adjustments.
 
 ## Risks
 
@@ -342,3 +342,20 @@ when: the structural acceptance contract below passes end to end.
   `verify:adjustments-cn` found 81 comparable vendor events, 37 first-point
   baselines, 2 vendor-only points, 8 local-only events, and no malformed rows;
   residuals are segmented diagnostics, never a threshold gate.
+- 2026-07-10, CN-P4: `verify:continuity` now stages raw coverage independently
+  of fact parsing and checks every prototype code/window, every calendar date,
+  every listed open-day raw row, every traded fact bar, suspension handling,
+  and closure contradictions. Live evidence is 42 codes, 739 calendar days,
+  491 open days, 19,749 raw rows, 19,642 traded fact bars, and 107 suspended
+  raw-only rows with zero gaps, missing facts, invalid rows, or closure
+  contradictions. The same verifier remains green for 507 US open days plus
+  22 closures and four intraday days.
+- 2026-07-10, structural contract: one source-neutral
+  `adjustedReturnSeries` query ran unchanged for AAPL and 600519 under
+  `split_dividend`, returning the same
+  `date|close|one_day_return|return_from_start` schema and 20 observations for
+  each. Live browser verification covered `600519` and `贵州茅台` search, a
+  491-bar CNY-adjusted Moutai chart, and BYD's same-day cash plus
+  bonus/conversion action display; the browser console was clean. Rights
+  issues, complete historical names, CN minutes, BSE, and a whole-market
+  backfill remain explicitly deferred.
