@@ -167,11 +167,17 @@ test covers raw→parquet→identity→adjusted→quarantine→rebuild; and
 two-tapes doctrine (data-model, phenomena §13): daily bars are authoritative
 for official OHLC, minute bars for intraday paths.
 
+## Next — CN stock market
+
+Planned in full: [cn-market-plan.md](cn-market-plan.md) (2026-07-10,
+written for hand-off). Four phases: Tushare raw ingestion → CN facts
+builders into the same tables → factor view extended with the CN ex-right
+formula + adj_factor parity → pipeline/contract/UI. Open owner decisions
+listed at the end of that doc.
+
 ## Later (explicitly out of scope now)
 
 - Earnings (Benzinga) and SEC filings events
-- CN market via Tushare (schema already supports it: new market_scope,
-  calendar, connector — same tables)
 - Research/strategy/backtest redesign, monitoring, IBKR paper trading
 
 ## Resolved decisions (owner, 2026-07-08)
