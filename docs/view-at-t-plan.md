@@ -347,3 +347,7 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   bar after T; a horizon before that delayed entry returns `no_entry_bar`.
   MAE/MFE follow the specified `(E, D]` interval exactly, while `bars_used`
   counts the entry bar through the carried valuation bar inclusively.
+- 2026-07-10, VT-P2 correction: the exact catalog tables enumerate 53 ids
+  (40 non-context plus 13 context), not the stated total of 47. All named ids
+  are implemented; none were cut to force the erroneous prose total. `stdev`
+  uses sample standard deviation, matching DuckDB's `stddev` convention.

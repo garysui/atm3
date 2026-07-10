@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { adjustedReturnSeries } from '../server/return-series.ts'
+import { metricsAt } from '../server/metrics-at.ts'
 import { buildAllFacts } from '../server/facts-build.ts'
 import { landRawFile } from '../server/raw-zone.ts'
 import type { Atm3Db } from '../server/db.ts'
@@ -81,6 +82,11 @@ test('backward view at T is byte-equal after post-T raw lands and facts rebuild'
         asOf: '2025-01-03',
       })
       assert.equal(before.length, 2)
+      const metricsBefore = await metricsAt(db.connection, {
+        instrumentId: instrument,
+        marketScope: 'us_stocks',
+        t: '2025-01-03',
+      })
 
       // Land only post-T truth: a later bar and a later split statement.
       await land(db, dataDir, {
@@ -110,6 +116,12 @@ test('backward view at T is byte-equal after post-T raw lands and facts rebuild'
         asOf: '2025-01-03',
       })
       assert.equal(JSON.stringify(after), JSON.stringify(before))
+      const metricsAfter = await metricsAt(db.connection, {
+        instrumentId: instrument,
+        marketScope: 'us_stocks',
+        t: '2025-01-03',
+      })
+      assert.equal(JSON.stringify(metricsAfter), JSON.stringify(metricsBefore))
 
       const current = await adjustedReturnSeries(db.connection, {
         instrumentId: instrument,
