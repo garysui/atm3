@@ -303,3 +303,36 @@ form {
   max-width: none !important;
   height: auto;
 }
+
+/* Comprehensive stock chart: toolbar, crosshair legend, price+volume panes. */
+.chart-toolbar {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin: 6px 0 2px;
+  font-size: 12px;
+}
+
+.chart-toolbar button {
+  padding: 0 6px;
+}
+
+.chart-wrap {
+  position: relative;
+}
+
+.chart-legend {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  z-index: 5;
+  font: 11px ui-monospace, monospace;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #e5e5e5;
+  padding: 1px 6px;
+  pointer-events: none;
+}
+
+.chart-tall {
+  height: 500px;
+}

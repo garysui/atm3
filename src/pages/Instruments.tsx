@@ -6,7 +6,11 @@ import {
   type MinuteBarsResponse,
   type Row,
 } from '../api.ts'
-import { BarsChart, type ChartEvent } from '../components/BarsChart.tsx'
+import {
+  StockChart,
+  type ChartBar,
+  type ChartEvent,
+} from '../components/StockChart.tsx'
 import { DataTable } from '../components/DataTable.tsx'
 
 const policies = ['none', 'split', 'split_dividend'] as const
@@ -208,6 +212,51 @@ export function Instruments({
 
   const firstBarFactor = bars?.bars[0]?.cum_price_factor
 
+  const dailyChartBars = useMemo<ChartBar[]>(
+    () =>
+      (bars?.bars ?? []).map((bar) => ({
+        date: String(bar.date),
+        open: Number(bar.open),
+        high: Number(bar.high),
+        low: Number(bar.low),
+        close: Number(bar.close),
+        volume: bar.volume === null ? null : Number(bar.volume),
+      })),
+    [bars],
+  )
+
+  // Ticker changes drawn on the chart: the identity model made the series
+  // continuous, the marker shows where the label changed (SATS → ECHO).
+  const renameEvents = useMemo<ChartEvent[]>(() => {
+    const rows = bars?.bars ?? []
+    const out: ChartEvent[] = []
+
+    for (let index = 1; index < rows.length; index++) {
+      if (rows[index].symbol_as_traded !== rows[index - 1].symbol_as_traded) {
+        out.push({
+          date: String(rows[index].date),
+          kind: 'rename',
+          text: `→${String(rows[index].symbol_as_traded)}`,
+        })
+      }
+    }
+
+    return out
+  }, [bars])
+
+  const minuteChartBars = useMemo<ChartBar[]>(
+    () =>
+      (minuteBars?.bars ?? []).map((bar) => ({
+        date: Number(bar.time),
+        open: Number(bar.open),
+        high: Number(bar.high),
+        low: Number(bar.low),
+        close: Number(bar.close),
+        volume: bar.volume === null ? null : Number(bar.volume),
+      })),
+    [minuteBars],
+  )
+
   return (
     <div>
       <form onSubmit={search}>
@@ -294,9 +343,10 @@ export function Instruments({
               </span>
             )}
           </form>
-          <BarsChart
-            bars={bars?.bars ?? []}
-            events={chartEvents}
+          <StockChart
+            mode="daily"
+            bars={dailyChartBars}
+            events={[...chartEvents, ...renameEvents]}
             resetKey={`${instrumentId}|${asOf}`}
           />
           {!bars && <p className="muted">loading bars…</p>}
@@ -336,14 +386,9 @@ export function Instruments({
                           : '')
                       : ' · loading…'}
                   </p>
-                  <BarsChart
-                    bars={(minuteBars?.bars ?? []).map((bar) => ({
-                      date: Number(bar.time),
-                      open: Number(bar.open),
-                      high: Number(bar.high),
-                      low: Number(bar.low),
-                      close: Number(bar.close),
-                    }))}
+                  <StockChart
+                    mode="intraday"
+                    bars={minuteChartBars}
                     events={[]}
                     resetKey={`${instrumentId}|${minuteDay}|${asOf}`}
                   />
