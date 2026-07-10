@@ -1,0 +1,1 @@
+00.9.004600000001600successquery_stock_basicanonymous1500{"record":[["sh.600519","贵州茅台","2001-08-27","","1","1"]]}sh.600519code, code_name, ipoDate, outDate, type, status1195366182<![CDATA[]]>

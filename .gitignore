@@ -3,6 +3,7 @@ dist/
 logs/
 *.log
 .DS_Store
+acquisition/.venv/
 
 # local env and credentials
 .env

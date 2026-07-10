@@ -20,7 +20,7 @@ Constraints:
 4. Prototype universe of ~30–50 representative securities, not 5,000.
 5. US behavior must be byte/row-equivalent after this work.
 
-## Source: BaoStock (prototype; pinned `baostock==0.8.9`)
+## Source: BaoStock (prototype; pinned `baostock==0.9.2`)
 
 Free, anonymous `bs.login()` (no registration/token) — satisfies the
 constraint. Honestly labeled: community project, self-classified **Alpha**,
@@ -296,3 +296,31 @@ when: the structural acceptance contract below passes end to end.
   quarantine + the diagnostic comparison surface these.
 - Name-change capture is snapshot-diff-based → gaps are expected and
   documented as deferred scope.
+
+## Implementation notes
+
+- 2026-07-10, CN-P0: pinned BaoStock 0.8.9 still names
+  `www.baostock.com:10030`, which timed out, while the current
+  `public-api.baostock.com:10030` accepted connections. The relay keeps the
+  pinned SDK and overrides only its server host constant, with
+  `ATM3_BAOSTOCK_HOST` available for diagnostics. Raw protocol behavior and
+  client version remain those of 0.8.9. The current server then rejected
+  client version `00.8.90` with error `10001004`, requiring one of
+  `00.9.00|00.9.10|00.9.20|00.9.30`. CN-P0 is therefore blocked at its
+  go/no-go checkpoint until the owner approves a new pinned SDK version;
+  no fixture frames or downstream CN work were produced.
+- 2026-07-10, owner resolution: upgrade the prototype pin to
+  `baostock==0.9.2` (client protocol `00.9.20`, one of the server-advertised
+  accepted versions) and repeat CN-P0 from the frame-capture gate.
+- 2026-07-10, CN-P0 grammar: the 0.9.2 hook is feasible. Each decompressed
+  response is a 21-character header (`server_version`, message type,
+  zero-padded body character length) followed by a SOH-delimited body. Body
+  field 6 is `{\"record\":[[...],...]}` JSON; the field-name list is at a
+  method-specific trailing position. Non-compressed responses retain the
+  response CRC field and 13-byte `<![CDATA[]]>\n` transport terminator, which
+  facts parsing removes without changing the stored frame. For compressed
+  message type `96`, the
+  header length remains the compressed-wire byte count after the SDK returns
+  a decompressed body, so only non-compressed frames can enforce header/body
+  character-length equality. Fixtures cover all six prototype calls; calendar
+  and unadjusted history were hash-stable on identical re-capture.
