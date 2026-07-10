@@ -5,6 +5,9 @@ The project's dictionary: every non-obvious term, one place, kept current.
 or reason adds its entry here in the same commit. Entries are short — one
 definition, the exact calculation where one exists, and why it matters.
 Formulas are ```` ```math ```` blocks (KaTeX-rendered in the Docs tab).
+The complete metric list with one-line meanings is the generated
+[metrics reference](metrics-reference.md); this glossary holds the formulas
+and the theory.
 
 Sections: Notation · Data layers · Identity · Corporate actions &
 adjustment · Calendars, sessions, publication · View at T · Volatility

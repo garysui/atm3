@@ -16,6 +16,7 @@
     "facts:minute": "tsx scripts/build-facts-minute.ts",
     "computed:cache": "tsx scripts/refresh-computed-cache.ts",
     "verify:adjustments": "tsx scripts/verify-adjustments.ts",
+    "docs:metrics": "tsx scripts/generate-metrics-reference.ts",
     "verify:adjustments-cn": "tsx scripts/verify-adjustments-cn.ts",
     "verify:intraday": "tsx scripts/verify-intraday.ts",
     "verify:continuity": "tsx scripts/verify-continuity.ts",
