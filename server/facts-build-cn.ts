@@ -681,3 +681,106 @@ export async function buildCnBarsDaily(
   logger.info({ cnBars, cnBarsUnresolved }, 'built CN daily-bar facts')
   return { cnBars, cnBarsUnresolved }
 }
+
+// Diagnostic-only staging of BaoStock's cumulative adjustment series. The
+// generic temp-table contract keeps vendor field positions inside this module;
+// downstream comparison code never references BaoStock response names.
+export async function stageCnVendorAdjustmentFactors(
+  connection: DuckDBConnection,
+  options: BuildOptions = {},
+): Promise<{ vendorFactorRows: number; invalidVendorFactorRows: number }> {
+  const ctx = context(connection, options)
+  const hasFactors = await datasetHasFiles(ctx, 'adj_factor', 'baostock')
+
+  await ctx.connection.run(`
+    create or replace temp table t_cn_vendor_factor_events (
+      vendor_code varchar,
+      event_date date,
+      cumulative_factor double,
+      vendor_price_factor double,
+      row_status varchar
+    );
+    create or replace temp table t_cn_vendor_factor_invalid (
+      vendor_code varchar,
+      event_date_text varchar,
+      cumulative_factor_text varchar,
+      reason varchar
+    )
+  `)
+  if (!hasFactors) {
+    return { vendorFactorRows: 0, invalidVendorFactorRows: 0 }
+  }
+
+  await ctx.connection.run(`
+    create or replace temp table t_cn_vendor_factor_parsed as
+    with ${frameRecords(ctx, 'baostock/adj_factor/*/*/*.frame')}
+    select
+      trim(r[1]) as vendor_code,
+      trim(r[2]) as event_date_text,
+      try_cast(trim(r[2]) as date) as event_date,
+      trim(r[4]) as cumulative_factor_text,
+      try_cast(trim(r[4]) as double) as cumulative_factor,
+      filename
+    from frame_records
+  `)
+
+  await ctx.connection.run(`
+    insert into t_cn_vendor_factor_invalid
+    select
+      vendor_code, event_date_text, cumulative_factor_text,
+      case
+        when not regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+          then 'invalid_vendor_code'
+        when event_date is null then 'invalid_event_date'
+        when cumulative_factor is null then 'invalid_cumulative_factor'
+        else 'nonpositive_cumulative_factor'
+      end
+    from t_cn_vendor_factor_parsed
+    where not regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+       or event_date is null
+       or cumulative_factor is null
+       or cumulative_factor <= 0
+  `)
+
+  await ctx.connection.run(`
+    insert into t_cn_vendor_factor_events
+    with valid as (
+      select vendor_code, event_date, cumulative_factor
+      from t_cn_vendor_factor_parsed
+      where regexp_full_match(vendor_code, '(sh|sz)\\.[0-9]{6}')
+        and event_date is not null
+        and cumulative_factor > 0
+      qualify row_number() over (
+        partition by vendor_code, event_date order by filename desc
+      ) = 1
+    ),
+    increments as (
+      select
+        *,
+        lag(cumulative_factor) over (
+          partition by vendor_code order by event_date
+        ) as previous_cumulative_factor
+      from valid
+    )
+    select
+      vendor_code,
+      event_date,
+      cumulative_factor,
+      previous_cumulative_factor / cumulative_factor,
+      case when previous_cumulative_factor is null
+        then 'vendor_baseline'
+        else 'comparable'
+      end
+    from increments
+  `)
+
+  const vendorFactorRows = await count(
+    ctx,
+    'select count(*) as n from t_cn_vendor_factor_events',
+  )
+  const invalidVendorFactorRows = await count(
+    ctx,
+    'select count(*) as n from t_cn_vendor_factor_invalid',
+  )
+  return { vendorFactorRows, invalidVendorFactorRows }
+}

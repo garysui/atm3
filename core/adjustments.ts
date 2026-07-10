@@ -24,7 +24,9 @@ export type AdjustmentPolicy = (typeof adjustmentPolicies)[number]
 //   going dark). An event applies to a series only when the series has bars
 //   after it: factors apply only where ex_date <= the instrument's last bar
 //   date, anchoring each series to its own latest tape.
-export const ADJUSTMENT_COMPUTATION_VERSION = 'adjust_v2'
+// v3: stock dividends/conversions are structure events, and cash dividends
+// are accepted in the instrument's own currency instead of USD only.
+export const ADJUSTMENT_COMPUTATION_VERSION = 'adjust_v3'
 
 // 2-for-1 split (from=1, to=2): earlier prices halve, earlier volumes double.
 export function splitPriceFactor(splitFrom: number, splitTo: number): number {
@@ -33,6 +35,23 @@ export function splitPriceFactor(splitFrom: number, splitTo: number): number {
 
 export function splitVolumeFactor(splitFrom: number, splitTo: number): number {
   return splitTo / splitFrom
+}
+
+// Bonus and reserve-conversion shares are stated per existing share. A total
+// ratio of 0.5 makes each old share become 1.5 shares: prior prices divide by
+// 1.5 and prior volumes multiply by 1.5.
+export function stockDividendFactor(
+  bonusRatio: number,
+  conversionRatio: number,
+): number {
+  return 1 / (1 + bonusRatio + conversionRatio)
+}
+
+export function stockDividendVolumeFactor(
+  bonusRatio: number,
+  conversionRatio: number,
+): number {
+  return 1 + bonusRatio + conversionRatio
 }
 
 // Cash dividend: earlier prices scale by 1 - cash/prevRawClose, where

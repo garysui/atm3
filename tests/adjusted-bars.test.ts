@@ -122,6 +122,7 @@ test('cache is a faithful, watermarked snapshot of the macro', async () => {
     const first = await refreshAdjustedBarsCache(db.connection)
     assert.equal(first.skipped, false)
     assert.equal(first.factorEvents.splits, 1)
+    assert.equal(first.factorEvents.stockDividends, 0)
     assert.equal(first.factorEvents.dividends, 1)
     assert.deepEqual(first.cacheRows, { split: 4, split_dividend: 4 })
 
@@ -175,5 +176,74 @@ test('cache is a faithful, watermarked snapshot of the macro', async () => {
       force: true,
     })
     assert.equal(forced.skipped, false)
+  })
+})
+
+test('CN stock and cash distributions compose under existing policies', async () => {
+  await withTempDatabase(async (db) => {
+    const instrument = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    await db.connection.run(`
+      insert into facts.instruments (
+        instrument_id, asset_class, instrument_type, name,
+        primary_market_scope, currency
+      ) values (
+        cast('${instrument}' as uuid), 'equity', 'common_stock', 'CN Fixture',
+        'cn_stocks', 'CNY'
+      );
+      insert into facts.bars_daily (
+        source_id, instrument_id, market_date, market_scope, symbol_as_traded,
+        open, high, low, close, volume
+      ) values
+        ('baostock', cast('${instrument}' as uuid), date '2025-01-02',
+         'cn_stocks', '300001', 10, 10, 10, 10, 1000),
+        ('baostock', cast('${instrument}' as uuid), date '2025-01-03',
+         'cn_stocks', '300001', 6.6, 6.6, 6.6, 6.6, 1500);
+      insert into facts.corporate_actions (
+        source_id, source_action_id, instrument_id, market_scope,
+        symbol_as_stated, action_type, ex_date, cash_amount, currency,
+        bonus_ratio, conversion_ratio
+      ) values
+        ('baostock', 'cash', cast('${instrument}' as uuid), 'cn_stocks',
+         '300001', 'cash_dividend', date '2025-01-03', 0.15, 'CNY', null, null),
+        ('other', 'wrong-currency', cast('${instrument}' as uuid), 'cn_stocks',
+         '300001', 'cash_dividend', date '2025-01-03', 2, 'USD', null, null),
+        ('baostock', 'stock', cast('${instrument}' as uuid), 'cn_stocks',
+         '300001', 'stock_dividend', date '2025-01-03', null, 'CNY', 0.2, 0.3)
+    `)
+
+    const cash = await db.connection.runAndReadAll(`
+      select expected_currency, cash_amount, currency_mismatch_rows
+      from computed.dividend_cash_by_exdate
+      where instrument_id = cast('${instrument}' as uuid)
+    `)
+    assert.deepEqual(cash.getRowObjectsJson(), [
+      {
+        expected_currency: 'CNY',
+        cash_amount: 0.15,
+        currency_mismatch_rows: '1',
+      },
+    ])
+
+    const factors = await db.connection.runAndReadAll(`
+      select action_type, price_factor, volume_factor
+      from computed.adjustment_factor_events
+      where instrument_id = cast('${instrument}' as uuid)
+      order by action_type
+    `)
+    const rows = factors.getRowObjectsJson()
+    assert.equal(rows.length, 2)
+    closeTo(rows[0]?.price_factor, 1 - 0.15 / 10)
+    closeTo(rows[0]?.volume_factor, 1)
+    closeTo(rows[1]?.price_factor, 1 / 1.5)
+    closeTo(rows[1]?.volume_factor, 1.5)
+
+    const split = await macroRows(db, instrument, 'split')
+    closeTo(split[0]?.close, 10 / 1.5)
+    closeTo(split[0]?.volume, 1500)
+
+    const total = await macroRows(db, instrument, 'split_dividend')
+    closeTo(total[0]?.cum_price_factor, 0.985 / 1.5)
+    closeTo(total[0]?.close, 10 * 0.985 / 1.5)
+    closeTo(total[0]?.cum_volume_factor, 1.5)
   })
 })

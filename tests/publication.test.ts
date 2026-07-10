@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  latestCompletedCnTradingDate,
   latestCompletedTradingDate,
   latestPublishedMinuteDate,
 } from '../core/publication.ts'
@@ -18,6 +19,21 @@ test('daily cutoff is yesterday in ET, not UTC', () => {
   // After ET midnight the cutoff advances.
   const lateNight = new Date('2026-07-10T05:00:00Z') // 01:00 ET Jul 10
   assert.equal(latestCompletedTradingDate(lateNight), '2026-07-09')
+})
+
+test('CN daily cutoff is conservatively yesterday in Shanghai', () => {
+  // Shanghai has crossed midnight while New York is still on Jul 9.
+  const afterShanghaiMidnight = new Date('2026-07-09T17:00:00Z')
+  assert.equal(
+    latestCompletedCnTradingDate(afterShanghaiMidnight),
+    '2026-07-09',
+  )
+
+  const beforeShanghaiMidnight = new Date('2026-07-09T15:00:00Z')
+  assert.equal(
+    latestCompletedCnTradingDate(beforeShanghaiMidnight),
+    '2026-07-08',
+  )
 })
 
 test('minute cutoff respects the ~00:30 ET publication lag', () => {

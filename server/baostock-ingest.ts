@@ -6,6 +6,7 @@ import {
   type BaoStockRelayResult,
 } from '../connectors/baostock.ts'
 import { addDays, addYears } from '../core/dates.ts'
+import { latestCompletedCnTradingDate } from '../core/publication.ts'
 import type { Atm3Db } from './db.ts'
 import { env } from './env.ts'
 import { logger } from './log.ts'
@@ -28,11 +29,12 @@ export function cnSourceEnabled(): boolean {
 }
 
 export function cnBackfillWindow(now = new Date()): { from: string; to: string } {
-  const today = shanghaiDate.format(now)
   return {
-    from: env.ATM3_CN_BACKFILL_FROM ?? addYears(today, -2),
+    from:
+      env.ATM3_CN_BACKFILL_FROM ??
+      addYears(latestCompletedCnTradingDate(now), -2),
     // Conservative until a publication-hour contract is measured live.
-    to: addDays(today, -1),
+    to: latestCompletedCnTradingDate(now),
   }
 }
 

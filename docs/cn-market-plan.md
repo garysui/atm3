@@ -333,3 +333,12 @@ when: the structural acceptance contract below passes end to end.
   mixed cash/bonus/conversion distribution, a suspension gap, an ST rename,
   an inactive delisted code, unknown-code quarantine, and deterministic ids.
   Suspensions remain raw-only by policy; they are expected gaps, not bad rows.
+- 2026-07-10, CN-P3: daily publication timing could not be established from a
+  single capture session, so the planned conservative cutoff remains yesterday
+  in Asia/Shanghai and is pinned by pure-function tests. `adjust_v3` implements
+  stock-distribution factors and per-instrument cash currency. The real BYD
+  2025-07-29 event (P=337, cash=3.974, bonus=0.8, conversion=1.2) produces
+  `0.329402571711` by both hand formula and SQL, with volume factor 3.
+  `verify:adjustments-cn` found 81 comparable vendor events, 37 first-point
+  baselines, 2 vendor-only points, 8 local-only events, and no malformed rows;
+  residuals are segmented diagnostics, never a threshold gate.

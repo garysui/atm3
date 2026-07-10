@@ -88,7 +88,7 @@ attribute, not a storage boundary — one database holds all scopes.
 |---|---|---|
 | `us_stocks` | AAPL, SPY (stocks, ETFs, ADRs…) | Polygon `locale=us, market=stocks` |
 | `us_indices` | I:SPX, I:NDX | Polygon `market=indices` |
-| `cn_stocks` | 600519.SH, 000001.SZ | Tushare (later) |
+| `cn_stocks` | 600519, 000001 | BaoStock prototype; connector replaceable |
 
 US ticker uniqueness is market-wide (consolidated tape), not per-exchange, so
 the scope is the market, and `exchange_mic` is a property of the listing.
@@ -426,18 +426,19 @@ The algorithm surface, defined declaratively in `db/schema.sql`:
 | function | kind | computes |
 |---|---|---|
 | `computed.canonical_bars_daily` | view | one tape line per instrument-day (max volume) |
-| `computed.dividend_cash_by_exdate` | view | deduped statements; same-day distinct distributions summed |
-| `computed.adjustment_factor_events` | view | per-event split/dividend factors from facts + own raw closes |
+| `computed.dividend_cash_by_exdate` | view | same-instrument-currency statements; same-day distinct distributions summed |
+| `computed.adjustment_factor_events` | view | per-event split/cash/stock-distribution factors from facts + own raw closes |
 | `computed.unadjustable_dividends` | view | dividends yielding no factor, with reason |
 | `computed.adjusted_bars(policy, as_of := null)` | table macro | THE adjusted series: any policy (`none` / `split` / `split_dividend`), any as-of date T, on demand |
 | `computed.adjusted_bars_for(instrument, policy, as_of := null)` | table macro | single-instrument variant (filters inside every stage) |
 
 Adjustment semantics (encoded in those views; formulas mirrored in
-`core/adjustments.ts`): splits scale price by from/to and volume by to/from
-per event; dividends scale price by 1 − cash/prev-raw-close with same-day
-distinct distributions summed first; an event applies only where the
-(as-of-limited) series has bars after it — each series anchors to its own
-latest tape.
+`core/adjustments.ts`): splits scale price by from/to and volume by to/from;
+bonus/conversion distributions with total ratio b scale price by 1/(1+b) and
+volume by 1+b; cash distributions in the instrument's currency scale price by
+1 − cash/prev-raw-close, with same-day distinct distributions summed first. An
+event applies only where the (as-of-limited) series has bars after it — each
+series anchors to its own latest tape.
 
 Exactly one cache table exists, plus its freshness ledger:
 
@@ -511,7 +512,7 @@ lands each frame byte-for-byte with a `.frame` extension and manifest. The
 42-code universe is intentionally selected to exercise market structure and is
 not a statistically representative research universe.
 
-| raw dataset | BaoStock call | planned facts use |
+| raw dataset | BaoStock call | facts use |
 |---|---|---|
 | `trade_cal` | `query_trade_dates` | `cn_equities` trading days |
 | `universe` | `query_all_stock` | listing/name snapshot evidence |

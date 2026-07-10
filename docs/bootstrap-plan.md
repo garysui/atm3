@@ -191,7 +191,30 @@ verbatim frames. A second complete pass fetched zero frames. Rebuilding
 `raw.fetches` from 2,228 manifests reproduced every BaoStock dataset count.
 The 42-code list remains prominently owner-vetoable before expansion.
 
-Next: CN-P2 facts builders into the existing shared tables.
+### CN-P2 — source-neutral facts
+
+Status: done 2026-07-10 (schema v4). BaoStock frames rebuild the existing
+shared exchange, identity, calendar, corporate-action, and daily-bar tables in
+the same atomic transaction as Polygon. Live output: 42 deterministic
+instruments/symbols/identifiers, 914 calendar days, 150 action components, and
+19,642 traded bars; 107 suspension rows remain raw-only. A second live rebuild
+reproduced id checksum `c17f7eb82acbc6c50d5c34452d610c7d` and the same
+counts. US proof remained 5,723,744 bars / 15,302 instruments-with-bars with
+unchanged AAPL, META, and MSFT checksums.
+
+### CN-P3 — computed factors and diagnostic
+
+Status: done 2026-07-10. `adjust_v3` adds bonus/conversion price and volume
+factors to the existing policies and accepts cash in each instrument's own
+currency. The real BYD 2025-07-29 mixed event matches the hand formula to 12
+decimal places. The vendor comparison reports 81 comparable events, 37 first-
+point baselines, 2 vendor points without local factors, 8 local events without
+vendor points, and zero malformed rows. Residuals are descriptive and segmented
+by action structure; they are never used as a blanket pass/fail threshold. The
+live `adjust_v3` cache contains 5,741,773 canonical rows under each existing
+policy (1,605 split, 7 stock-distribution, and 75,159 cash factor events).
+
+Next: CN-P4 API/UI surfaces and the cross-market continuity contract.
 
 ## Later (explicitly out of scope now)
 

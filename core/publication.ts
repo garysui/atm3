@@ -17,6 +17,12 @@ const etHour = new Intl.DateTimeFormat('en-US', {
   hour: '2-digit',
   hour12: false,
 })
+const shanghaiDate = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
 
 // Grouped daily bars for day D are published the same evening; the safe,
 // simple cutoff is "yesterday in ET" — never the still-running/just-closed
@@ -32,4 +38,10 @@ export function latestPublishedMinuteDate(now: Date): string {
   const today = etDate.format(now)
   const hour = Number(etHour.format(now)) % 24
   return addDays(today, hour >= 6 ? -1 : -2)
+}
+
+// CN daily publication timing is not yet measured across enough sessions for
+// an intraday hour contract. Yesterday in Shanghai is the conservative bound.
+export function latestCompletedCnTradingDate(now: Date): string {
+  return addDays(shanghaiDate.format(now), -1)
 }

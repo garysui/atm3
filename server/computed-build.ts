@@ -12,7 +12,7 @@ import { logger } from './log.ts'
 export type CacheRefreshResult = {
   skipped: boolean
   watermark: string
-  factorEvents: { splits: number; dividends: number }
+  factorEvents: { splits: number; stockDividends: number; dividends: number }
   unadjustableDividends: Array<Record<string, unknown>>
   cacheRows: { split: number; split_dividend: number }
 }
@@ -93,6 +93,11 @@ async function collectStats(
         connection,
         `select count(*) as n from computed.adjustment_factor_events
          where action_type = 'split'`,
+      ),
+      stockDividends: await count(
+        connection,
+        `select count(*) as n from computed.adjustment_factor_events
+         where action_type = 'stock_dividend'`,
       ),
       dividends: await count(
         connection,

@@ -119,8 +119,11 @@ Two lessons baked into the design:
   derive them.
 - Vendor-adjusted bars (`adjusted=true` files) adjust per TICKER and only
   for executed splits — they never span renames. atm3 keeps them solely as a
-  parity check: `npm run verify:adjustments` (100.000% close match on
-  active instruments, by construction of the differences elsewhere).
+  parity check: `npm run verify:adjustments`. The 2026-07-08 benchmark was a
+  100.000% close match on active instruments. On 2026-07-10 it reports
+  99.984% because the capture-time adjusted files predate newer retroactive
+  split statements (largest current cases: CYN and RBNE); those files remain
+  diagnostics, never inputs to facts or computed factors.
 
 ## 11. Not everything on the tape is an investable security
 
@@ -186,6 +189,22 @@ identifier. Current prototype behavior is deliberately narrow:
 
 BaoStock field names stop at `server/facts-build-cn.ts`. Downstream research
 continues to query source-neutral instrument ids, bars, calendars, and actions.
+
+Stock distributions are structure events under both `split` and
+`split_dividend`; cash joins them only under `split_dividend`. For a cash amount
+c, bonus/conversion ratio b, and previous raw close P, the same-day product is
+`(1-c/P) * 1/(1+b) = (P-c)/(P(1+b))`. BYD (`002594`, 2025-07-29) is a real
+mixed case in the prototype: P=337, c=3.974, bonus=0.8, conversion=1.2. The
+hand result and computed result are both `0.329402571711`; volume factor is 3.
+
+`npm run verify:adjustments-cn` compares those economic factors with BaoStock's
+cumulative price-ratio series. It is a segmented diagnostic, not an oracle or
+a threshold gate. Current coverage classes are: comparable events; first
+vendor points that lack a prior cumulative value; vendor points with no local
+factor; and local events with no vendor point. Comparable residuals are split
+by cash-only, stock-only, and mixed action structure. Cash residuals are
+expected because an observed ex-date price ratio also contains market movement;
+the local formula isolates the distribution economics.
 
 ## The general lesson
 

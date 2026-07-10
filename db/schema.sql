@@ -318,29 +318,43 @@ qualify row_number() over (
   order by volume desc nulls last, symbol_as_traded
 ) = 1;
 
--- Same-day dividend cash per instrument: duplicate statements of one
--- distribution (same day/type/amount/currency — vendors restate around
--- renames) collapse via distinct; DISTINCT same-day distributions
--- (regular + special) SUM, because they reduce one prev close once.
+-- Same-day dividend cash per instrument: accept the instrument's own currency
+-- (USD fallback for legacy rows), collapse duplicate statements, then SUM
+-- distinct regular/special distributions because they reduce one prev close.
 create or replace view computed.dividend_cash_by_exdate as
 with statements as (
   select distinct
-    instrument_id, ex_date,
-    coalesce(dividend_type, '') as dividend_type,
-    cash_amount,
-    coalesce(currency, 'USD') as currency
-  from facts.corporate_actions
-  where action_type = 'cash_dividend' and coalesce(cash_amount, 0) > 0
+    c.instrument_id, c.ex_date,
+    coalesce(c.dividend_type, '') as dividend_type,
+    c.cash_amount,
+    coalesce(nullif(upper(i.currency), ''), 'USD') as expected_currency,
+    coalesce(
+      nullif(upper(c.currency), ''),
+      coalesce(nullif(upper(i.currency), ''), 'USD')
+    ) as statement_currency
+  from facts.corporate_actions c
+  join facts.instruments i using (instrument_id)
+  where c.action_type = 'cash_dividend' and coalesce(c.cash_amount, 0) > 0
 )
 select
   instrument_id,
   ex_date,
-  coalesce(sum(cash_amount) filter (currency = 'USD'), 0) as cash_usd,
-  count(*) filter (currency <> 'USD') as non_usd_rows,
+  -- Compatibility aliases: for all existing US rows expected_currency=USD,
+  -- so these retain their exact historical meaning and values.
+  coalesce(
+    sum(cash_amount) filter (statement_currency = expected_currency), 0
+  ) as cash_usd,
+  count(*) filter (statement_currency <> expected_currency) as non_usd_rows,
   string_agg(dividend_type || ':' || cash_amount, ','
-             order by dividend_type, cash_amount) as evidence
+             order by dividend_type, cash_amount) as evidence,
+  expected_currency,
+  coalesce(
+    sum(cash_amount) filter (statement_currency = expected_currency), 0
+  ) as cash_amount,
+  count(*) filter (statement_currency <> expected_currency)
+    as currency_mismatch_rows
 from statements
-group by instrument_id, ex_date;
+group by instrument_id, ex_date, expected_currency;
 
 -- Per-event adjustment factors from corporate-action facts and our own raw
 -- closes (see core/adjustments.ts). Vendor adjustment factors are never
@@ -360,6 +374,29 @@ with split_statements as (
   where action_type = 'split'
     and coalesce(split_from, 0) > 0
     and coalesce(split_to, 0) > 0
+),
+stock_statements as (
+  select *,
+    row_number() over (
+      partition by instrument_id, ex_date,
+                   coalesce(bonus_ratio, 0), coalesce(conversion_ratio, 0)
+      order by source_id, source_action_id
+    ) as statement_rank
+  from facts.corporate_actions
+  where action_type = 'stock_dividend'
+    and coalesce(bonus_ratio, 0) + coalesce(conversion_ratio, 0) > 0
+),
+stock_by_exdate as (
+  select
+    instrument_id,
+    ex_date,
+    sum(coalesce(bonus_ratio, 0)) as bonus_ratio,
+    sum(coalesce(conversion_ratio, 0)) as conversion_ratio,
+    string_agg(source_id || ':' || source_action_id, ','
+               order by source_id, source_action_id) as evidence
+  from stock_statements
+  where statement_rank = 1
+  group by instrument_id, ex_date
 )
 select
   instrument_id, ex_date as event_date, 'split' as action_type,
@@ -371,13 +408,20 @@ where statement_rank = 1
 union all
 select
   c.instrument_id, c.ex_date as event_date, 'cash_dividend' as action_type,
-  1 - c.cash_usd / b.close as price_factor,
+  1 - c.cash_amount / b.close as price_factor,
   1.0 as volume_factor,
   c.evidence
 from computed.dividend_cash_by_exdate c
 asof join computed.canonical_bars_daily b
   on c.instrument_id = b.instrument_id and c.ex_date > b.market_date
-where c.cash_usd > 0 and b.close > c.cash_usd;
+where c.cash_amount > 0 and b.close > c.cash_amount
+union all
+select
+  s.instrument_id, s.ex_date as event_date, 'stock_dividend' as action_type,
+  1.0 / (1.0 + s.bonus_ratio + s.conversion_ratio) as price_factor,
+  1.0 + s.bonus_ratio + s.conversion_ratio as volume_factor,
+  s.evidence
+from stock_by_exdate s;
 
 -- Dividends that produce no factor, with the reason — quarantine-style
 -- visibility as a function, not a stored table.
@@ -385,13 +429,16 @@ create or replace view computed.unadjustable_dividends as
 select
   c.instrument_id, c.ex_date, c.cash_usd, c.non_usd_rows,
   b.close as prev_close,
-  case when c.cash_usd = 0 then 'non_usd_only'
+  case when c.cash_amount = 0 and c.expected_currency = 'USD'
+         then 'non_usd_only'
+       when c.cash_amount = 0 then 'currency_mismatch_only'
        when b.close is null then 'no_prev_close'
-       else 'cash_exceeds_prev_close' end as reason
+       else 'cash_exceeds_prev_close' end as reason,
+  c.cash_amount, c.expected_currency, c.currency_mismatch_rows
 from computed.dividend_cash_by_exdate c
 asof left join computed.canonical_bars_daily b
   on c.instrument_id = b.instrument_id and c.ex_date > b.market_date
-where c.cash_usd = 0 or b.close is null or b.close <= c.cash_usd;
+where c.cash_amount = 0 or b.close is null or b.close <= c.cash_amount;
 
 -- THE adjusted-bars algorithm: any policy, any as-of date T, computed on
 -- the fly from facts. A bar's cumulative factor is the product over events
@@ -416,7 +463,7 @@ f as (
   join last_bar lb
     on lb.instrument_id = af.instrument_id
     and af.event_date <= lb.last_bar_date
-  where (af.action_type = 'split'
+  where (af.action_type in ('split', 'stock_dividend')
            and policy in ('split', 'split_dividend'))
      or (af.action_type = 'cash_dividend'
            and policy = 'split_dividend')
@@ -475,7 +522,7 @@ f as (
   from computed.adjustment_factor_events af, last_bar lb
   where af.instrument_id = instrument
     and af.event_date <= lb.last_bar_date
-    and ((af.action_type = 'split'
+    and ((af.action_type in ('split', 'stock_dividend')
             and policy in ('split', 'split_dividend'))
       or (af.action_type = 'cash_dividend'
             and policy = 'split_dividend'))
@@ -528,7 +575,7 @@ f as (
   join last_bar lb
     on lb.instrument_id = af.instrument_id
    and af.event_date <= lb.last_bar_date
-  where (af.action_type = 'split'
+  where (af.action_type in ('split', 'stock_dividend')
            and policy in ('split', 'split_dividend'))
      or (af.action_type = 'cash_dividend'
            and policy = 'split_dividend')
@@ -586,7 +633,7 @@ f as (
   from computed.adjustment_factor_events af, last_bar lb
   where af.instrument_id = instrument
     and af.event_date <= lb.last_bar_date
-    and ((af.action_type = 'split'
+    and ((af.action_type in ('split', 'stock_dividend')
             and policy in ('split', 'split_dividend'))
       or (af.action_type = 'cash_dividend'
             and policy = 'split_dividend'))
