@@ -327,3 +327,9 @@ when: the structural acceptance contract below passes end to end.
 - 2026-07-10, CN-P1: successful calls with no rows may encode body field 6
   as an empty string rather than `{\"record\":[]}`. The TypeScript parser
   matches the SDK's `setData` behavior and treats both forms as zero records.
+- 2026-07-10, CN-P2: BaoStock frame payloads now rebuild source-neutral CN
+  exchange, identity, calendar, corporate-action, and unadjusted daily-bar
+  facts inside the existing all-facts transaction. The fixture proof covers a
+  mixed cash/bonus/conversion distribution, a suspension gap, an ST rename,
+  an inactive delisted code, unknown-code quarantine, and deterministic ids.
+  Suspensions remain raw-only by policy; they are expected gaps, not bad rows.

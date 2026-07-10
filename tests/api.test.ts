@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createApiServer } from '../server/api.ts'
-import { openDatabase } from '../server/db.ts'
+import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 import { A, seedFacts } from './fixtures.ts'
 
 test('api serves health, scopes, search, detail, and policy bars', async () => {
@@ -62,7 +62,7 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
       schemaVersion: number
     }
     assert.equal(health.ok, true)
-    assert.equal(health.schemaVersion, 3)
+    assert.equal(health.schemaVersion, SCHEMA_VERSION)
 
     const scopes = (await (await fetch(`${base}/api/scopes`)).json()) as Array<{
       scope: string

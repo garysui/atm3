@@ -196,6 +196,9 @@ create table if not exists facts.corporate_actions (
   split_from double,
   split_to double,
   cash_amount double,
+  cash_amount_post_tax double,
+  bonus_ratio double,
+  conversion_ratio double,
   currency varchar,
   dividend_type varchar,
   frequency integer,
@@ -300,13 +303,16 @@ group by p.symbol, p.market_date;
 -- is a materialized snapshot of the macro at the current T, verified
 -- identical, invalidated by watermark, and always droppable.
 
--- One canonical tape line per instrument-day (max volume; one instrument
--- can trade as concurrent lines, e.g. when-issued tickers).
+-- One canonical vendor per market scope, then one tape line per
+-- instrument-day (max volume; one instrument can trade as concurrent lines,
+-- e.g. when-issued tickers). Adding a second vendor for one scope requires an
+-- explicit precedence/reconciliation policy here; volume never picks vendors.
 create or replace view computed.canonical_bars_daily as
 select instrument_id, market_date, symbol_as_traded,
        open, high, low, close, volume, vwap
 from facts.bars_daily
-where source_id = 'polygon'
+where (market_scope = 'us_stocks' and source_id = 'polygon')
+   or (market_scope = 'cn_stocks' and source_id = 'baostock')
 qualify row_number() over (
   partition by instrument_id, market_date
   order by volume desc nulls last, symbol_as_traded

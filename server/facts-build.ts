@@ -1,8 +1,21 @@
 import { randomUUID } from 'node:crypto'
-import path from 'node:path'
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { classificationCaseSql } from '../core/instrument-types.ts'
-import { env } from './env.ts'
+import {
+  context,
+  count,
+  datasetHasFiles,
+  glob,
+  inTransaction,
+  type BuildOptions,
+} from './facts-common.ts'
+import {
+  buildCnBarsDaily,
+  buildCnCorporateActions,
+  buildCnExchanges,
+  buildCnIdentity,
+  buildCnTradingDays,
+} from './facts-build-cn.ts'
 import { logger } from './log.ts'
 
 // Facts builders: deterministic, full-refresh computations from the raw zone
@@ -14,77 +27,7 @@ import { logger } from './log.ts'
 // null = open-ended. resolve(market_scope, symbol, date) picks the row with
 // valid_from <= date < valid_to.
 
-export type BuildOptions = {
-  dataDir?: string
-  // buildAllFacts wraps every builder in ONE transaction so readers never
-  // observe mixed generations and a mid-build failure rolls back wholesale
-  // (review finding #3); standalone builder calls manage their own.
-  transactional?: boolean
-}
-
-type BuildContext = {
-  connection: DuckDBConnection
-  rawRoot: string
-}
-
-function sqlString(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`
-}
-
-function context(
-  connection: DuckDBConnection,
-  options: BuildOptions,
-): BuildContext {
-  return {
-    connection,
-    rawRoot: path.join(path.resolve(options.dataDir ?? env.ATM3_DATA_DIR), 'raw'),
-  }
-}
-
-function glob(ctx: BuildContext, relative: string): string {
-  return sqlString(path.join(ctx.rawRoot, relative))
-}
-
-async function datasetHasFiles(
-  ctx: BuildContext,
-  dataset: string,
-): Promise<boolean> {
-  const result = await ctx.connection.runAndReadAll(
-    `select 1 from raw.fetches where dataset = $dataset limit 1`,
-    { dataset },
-  )
-  return result.getRowObjectsJson().length > 0
-}
-
-async function count(ctx: BuildContext, sql: string): Promise<number> {
-  const result = await ctx.connection.runAndReadAll(sql)
-  return Number(result.getRowObjectsJson()[0]?.n ?? 0)
-}
-
-async function inTransaction(
-  ctx: BuildContext,
-  fn: () => Promise<void>,
-  ownTransaction = true,
-): Promise<void> {
-  if (!ownTransaction) {
-    await fn()
-    return
-  }
-
-  await ctx.connection.run('begin transaction')
-
-  try {
-    await fn()
-    await ctx.connection.run('commit')
-  } catch (error) {
-    try {
-      await ctx.connection.run('rollback')
-    } catch {
-      // The failed statement may have already aborted the transaction.
-    }
-    throw error
-  }
-}
+export type { BuildOptions } from './facts-common.ts'
 
 // facts.exchanges from the latest exchanges snapshot. market_scope is
 // locale + asset_class (us_stocks, ...); calendar/timezone/currency are
@@ -150,7 +93,10 @@ export async function buildExchanges(
     `)
   }, options.transactional ?? true)
 
-  const exchanges = await count(ctx, 'select count(*) as n from facts.exchanges')
+  const exchanges = await count(
+    ctx,
+    "select count(*) as n from facts.exchanges where market_scope = 'us_stocks'",
+  )
   logger.info({ exchanges }, 'built facts.exchanges')
   return { exchanges }
 }
@@ -230,7 +176,7 @@ export async function buildTradingDays(
 
   const tradingDays = await count(
     ctx,
-    'select count(*) as n from facts.trading_days',
+    "select count(*) as n from facts.trading_days where calendar_id = 'us_equities'",
   )
   logger.info({ tradingDays }, 'built facts.trading_days')
   return { tradingDays }
@@ -554,12 +500,15 @@ export async function buildIdentity(
 
   const instruments = await count(
     ctx,
-    'select count(*) as n from facts.instruments',
+    "select count(*) as n from facts.instruments where primary_market_scope = 'us_stocks'",
   )
-  const symbols = await count(ctx, 'select count(*) as n from facts.symbols')
+  const symbols = await count(
+    ctx,
+    "select count(*) as n from facts.symbols where market_scope = 'us_stocks'",
+  )
   const identifiers = await count(
     ctx,
-    'select count(*) as n from facts.instrument_identifiers',
+    "select count(*) as n from facts.instrument_identifiers where source_id = 'polygon'",
   )
   logger.info({ instruments, symbols, identifiers }, 'built identity facts')
   return { instruments, symbols, identifiers }
@@ -701,7 +650,7 @@ export async function buildCorporateActions(
 
   const corporateActions = await count(
     ctx,
-    'select count(*) as n from facts.corporate_actions',
+    "select count(*) as n from facts.corporate_actions where source_id = 'polygon'",
   )
   const unresolved = await count(
     ctx,
@@ -798,7 +747,10 @@ export async function buildBarsDaily(
     `)
   }, options.transactional ?? true)
 
-  const bars = await count(ctx, 'select count(*) as n from facts.bars_daily')
+  const bars = await count(
+    ctx,
+    "select count(*) as n from facts.bars_daily where source_id = 'polygon'",
+  )
   const unresolved = await count(
     ctx,
     `select count(*) as n from ops.unresolved where dataset = 'grouped_daily'`,
@@ -825,6 +777,11 @@ export async function buildAllFacts(
     const tradingDays = await buildTradingDays(connection, inner)
     const corporateActions = await buildCorporateActions(connection, inner)
     const bars = await buildBarsDaily(connection, inner)
+    const cnExchanges = await buildCnExchanges(connection, inner)
+    const cnIdentity = await buildCnIdentity(connection, inner)
+    const cnTradingDays = await buildCnTradingDays(connection, inner)
+    const cnCorporateActions = await buildCnCorporateActions(connection, inner)
+    const cnBars = await buildCnBarsDaily(connection, inner)
     await connection.run(
       `insert or replace into ops.meta (key, value)
        values ('facts_generation', $generation)`,
@@ -838,6 +795,11 @@ export async function buildAllFacts(
       ...tradingDays,
       ...corporateActions,
       ...bars,
+      ...cnExchanges,
+      ...cnIdentity,
+      ...cnTradingDays,
+      ...cnCorporateActions,
+      ...cnBars,
     }
   } catch (error) {
     try {

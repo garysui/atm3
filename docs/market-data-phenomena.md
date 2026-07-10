@@ -162,6 +162,31 @@ intraday paths.** Never derive one from the other. `npm run verify:intraday`
 enforces the volume invariant and monitors close-agreement baselines by
 segment.
 
+## 14. China A-shares add market rules, not a second architecture
+
+The BaoStock prototype lands decompressed application frames as raw truth,
+then uses the same `facts` tables as US stocks. Instrument ids are minted from
+exchange + bare code (`cn:XSHG:600519`), while `sh.600519` remains a vendor
+identifier. Current prototype behavior is deliberately narrow:
+
+- Only rows with `tradestatus=1` and positive volume become daily-bar facts.
+  Suspension rows, `preclose`, turnover, percentage change, and ST flags stay
+  raw-only; an open calendar day can therefore be a legitimate per-instrument
+  chart gap.
+- ST and delisted securities are still identities, not parse errors. ST text
+  remains part of the observed name; a delisted code has an exclusive symbol
+  end date and can resolve bars only inside its listing window.
+- Implemented cash and stock distributions become separate same-day action
+  rows. Cash uses the pre-tax per-share amount; the post-tax value is retained
+  for evidence. Bonus and reserve-conversion shares remain separate ratios so
+  the computed layer can apply their combined structure factor exactly.
+- BaoStock has no established rights-issue feed and no complete name-history
+  endpoint. Rights adjustments and pre-prototype renames are therefore absent,
+  explicitly, rather than inferred.
+
+BaoStock field names stop at `server/facts-build-cn.ts`. Downstream research
+continues to query source-neutral instrument ids, bars, calendars, and actions.
+
 ## The general lesson
 
 Every phenomenon above is a reason adjusted/normalized data cannot be the

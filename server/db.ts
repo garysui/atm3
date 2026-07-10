@@ -13,7 +13,8 @@ import { env } from './env.ts'
 // v3: computed layer became algorithm-first — adjusted bars are the
 //     computed.adjusted_bars(policy, as_of) table macro over facts; the only
 //     table is the optional bars_daily_adjusted_cache snapshot.
-export const SCHEMA_VERSION = 3
+// v4: CN stock distributions added bonus/conversion/post-tax fields.
+export const SCHEMA_VERSION = 4
 
 const defaultSchemaPath = fileURLToPath(
   new URL('../db/schema.sql', import.meta.url),
