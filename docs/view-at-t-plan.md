@@ -1,250 +1,341 @@
-# View at T — plan (v1, 2026-07-10)
+# View at T — plan (v1.1, 2026-07-10, executable spec)
 
-Status: PLAN, for owner review before implementation. This is the research
-layer's first core concept, implementing the primitives the
-[bootstrap plan](bootstrap-plan.md) locked in its research-phase contract.
-First iteration is algorithms + a relatively complete metric catalog,
-computed on demand; persistence is explicitly a later stage.
+Status: PLAN, approved direction; written to be executed by another
+implementer without further design decisions. Supersedes v1 (same day):
+market context is reframed as **residualization** — separating a stock's
+movement from named baselines — and the metric catalog is now an exact
+spec, not prose.
 
 ## Concept
 
 At any time T, the data splits into two directions with different rules:
 
 1. **Backward (the visible past).** Everything with a bar date ≤ T, adjusted
-   *as of T* — reconstructing exactly what a careful observer standing at T
-   could have known. This algorithm already exists:
-   `computed.adjusted_bars(policy, as_of := T)` and `adjusted_bars_for`. What
-   v1 adds is the *contract* (visibility rules, tests) and consumers
-   (metrics).
-2. **Forward (the hidden future).** Bars after T are invisible for decisions,
-   but needed to score a position hypothetically opened at T. They must be
-   adjusted **relative to T**: a split or dividend between T and T+n changes
-   share count / pays cash, and the gain math must account for it.
+   *as of T* — exactly what a careful observer standing at T could know.
+   The algorithm exists: `computed.adjusted_bars(policy, as_of := T)` /
+   `adjusted_bars_for`. v1 adds the contract (visibility rules + tests) and
+   consumers (metrics).
+2. **Forward (the hidden future).** Bars after T are invisible for
+   decisions but needed to score a position hypothetically opened at T,
+   adjusted **relative to T** (splits scale shares, dividends pay cash).
 
-Doctrine unchanged: one data layer, algorithms over facts, compute on the
-fly. "100 functions on one data."
+Doctrine unchanged: one data layer, algorithms over facts, compute on
+demand. v1 stores nothing.
 
 ## The visibility contract (what is knowable at T)
 
-- **Bars:** market_date ≤ T. Default convention is **end-of-day T** (T's own
-  bar is complete). Metrics that are already known earlier carry an
-  `available_at: 'open'` tag (gap, overnight return) so a future at-open
-  backtest can select only those; everything else is `'close'`.
-- **Corporate actions, two distinct dates:**
-  - *Effective* at T: `ex_date <= T` — these adjust the backward view
-    (already the `as_of` semantics of the factor views).
-  - *Known* at T: `declaration_date <= T` — these may appear in
-    forward-looking context ("ex-dividend upcoming") **only** when a
-    declaration date exists and is ≤ T. Polygon populates it for dividends
-    and not for splits; splits are therefore treated as unknowable until
-    ex-date. Conservative beats clairvoyant.
-- **The law: truncation invariance.** Any at-T computation must return
-  identical results on the full database and on a database rebuilt from only
-  the raw files dated ≤ T. This is THE acceptance test for "no lookahead" —
-  see the contract section.
+- **Bars:** market_date ≤ T. Default convention: **end-of-day T** (T's bar
+  complete). Metrics knowable earlier are tagged `available_at: 'open'`
+  (gap); everything else `'close'`.
+- **Corporate actions — two dates, two meanings:**
+  - *Effective*: `ex_date <= T` adjusts the backward view (existing `as_of`
+    semantics).
+  - *Known*: `declaration_date <= T` may appear in forward-looking context
+    ("ex-dividend upcoming") only when present and ≤ T. Polygon populates it
+    for dividends, not splits → splits are unknowable before ex-date.
+- **Baselines too:** every context/residual quantity (β, correlations,
+  tracking-ETF selection) uses only bars ≤ T. No full-sample betas, no
+  today's-label leakage.
+- **The law — truncation invariance:** any at-T computation returns
+  identical results on the full database and on one rebuilt from only raw
+  files dated ≤ T. This is the acceptance test for "no lookahead".
 
 ## Forward returns (new primitive)
 
-`forwardReturns(instrumentId, t, {horizons, entryBasis, policy})` in
-`server/forward-returns.ts`, source-neutral like `adjustedReturnSeries`.
+`forwardReturns(connection, {instrumentId, marketScope, t, horizons,
+entryBasis, policy})` in `server/forward-returns.ts` — source-neutral,
+same shape discipline as `adjustedReturnSeries`.
 
 - **Horizons:** open days of the instrument's market-scope calendar
-  (`{1, 5, 21, 63, 126, 252}` default). Calendar days, not instrument bars —
-  a CN suspension must stretch time truthfully, not silently compress it.
-- **Entry bases:** `t_close` (raw close at T) and `next_open` (raw open of
-  the first bar after T). Default `next_open` — entering at the close of the
-  bar that generated the signal is mild lookahead.
-- **Math (total-return convention):** gain from entry date E to horizon date
-  D is the ratio of `split_dividend`-adjusted prices with any anchor
-  `as_of >= D`. Cumulative factors are products over events in `(date, anchor]`,
-  so the ratio between two dates depends only on events *between* them —
-  anchor-invariant. Equivalent to raw prices + split share scaling + cash
-  dividends reinvested on ex-date. A cash-tally (non-reinvested) variant is
-  execution-realism scope, later.
-- **Honest edges, per horizon:** `{date, ret, mae, mfe, delisted, stale, bars_used}`:
-  - `delisted`: the instrument's tape ends before D → report the last
-    available bar's return, flagged. Never silently drop — this is where
-    survivorship bias would otherwise enter.
-  - `stale`: no bar on D (CN suspension) → carry the last close ≤ D, flagged.
-  - `mae`/`mfe`: max adverse/favorable excursion — min adjusted low / max
-    adjusted high within (E, D] over entry, for stop/target research.
+  (default `{1, 5, 21, 63, 126, 252}`). Calendar-based, not bar-based — a
+  CN suspension stretches time truthfully instead of compressing it.
+- **Entry bases:** `next_open` (default; raw open of the first bar after T
+  — entering at the signal bar's own close is mild lookahead) and
+  `t_close` (raw close at T).
+- **Math (total-return convention):** return from entry date E to horizon
+  date D = ratio of `split_dividend`-adjusted prices with any anchor
+  `as_of >= D`. Factor products only involve events in `(E, D]`, so the
+  ratio is **anchor-invariant** (tested). Equivalent to raw price + split
+  share scaling + dividends reinvested at ex. Cash-tally (non-reinvested)
+  is execution-realism scope, later.
+- **Per horizon:** `{horizon, date, ret, mae, mfe, delisted, stale,
+  bars_used}`:
+  - `delisted`: tape ends before D → return through the last bar, flagged.
+    Never silently dropped — this is where survivorship bias would enter.
+  - `stale`: no bar on D (suspension) → carry last close ≤ D, flagged.
+  - `mae`/`mfe`: min adjusted low / max adjusted high in (E, D] over entry.
+- Entry-bar edge cases: T is the last bar → `next_open` entry impossible →
+  explicit `no_entry_bar` result, not an error. T not a bar date of the
+  instrument → error (the UI only offers bar dates).
 
-## Metrics at T
+## Metrics at T — engine design
 
-### Design rules
+1. **Catalog as data.** `core/metrics-catalog.ts` exports one entry per
+   metric: `{id, family, window, min_bars, available_at, basis, unit,
+   description}`. `server/metrics-at.ts` computes all metrics in one SQL
+   pass of window functions over
+   `computed.adjusted_bars_for(id, 'split_dividend', as_of := T)` (canonical
+   line, per existing macro semantics), joined with raw OHLC where basis
+   requires. UI and tests enumerate the catalog; adding a metric = one
+   catalog entry + one expression.
+2. **Null with a reason.** Fewer than `min_bars` bars ≤ T → `{value: null,
+   reason: 'insufficient_window', bars_available}` — never a shortened
+   window wearing a long window's label. Guarded denominators (H=L, zero
+   dollar volume) → `'undefined_input'`.
+3. **Bases.** `adj` = split_dividend-adjusted as-of-T (anything crossing
+   dates); `raw` = as-traded (within-bar shapes — factors cancel;
+   plus the level metrics used by real-price predicates); `dollar` = raw
+   close × raw volume (split-invariant by construction).
+4. No smoothing, winsorizing, or z-scoring here — research-layer choices,
+   later, over honest inputs.
 
-1. **Dimensionless by default.** Ratios and returns. The few level metrics
-   (as-traded close, log10 dollar ADV) are tagged `family: 'level'` with
-   units; they exist for filter predicates (`price > 10` uses the REAL
-   as-traded price, per the research contract).
-2. **Declared, not scattered.** `core/metrics-catalog.ts` is data: one entry
-   per metric — `{id, family, formula description, window, min_bars,
-   available_at, unit}`. The engine (`server/metrics-at.ts`) computes all of
-   them in one SQL pass over `adjusted_bars_for(id, policy, as_of := T)`
-   window functions. UI and tests enumerate the catalog; adding a metric is
-   adding one entry + one expression.
-3. **Null with a reason, never a partial window.** A 252-day return with 100
-   bars of history is null (`insufficient_window`, `bars_available: 100`) —
-   not a 100-day return wearing a 252-day label.
-4. **Adjusted basis for anything crossing dates** (`split_dividend` as-of-T),
-   raw basis for within-day shapes (H/L/C of the same bar — factors cancel).
-   Volume metrics use **dollar volume** (close × volume), which is
-   split-invariant by construction.
-5. **No smoothing, no winsorizing, no z-scores here.** Those are research-
-   layer choices over honest inputs.
+### Notation
 
-### Catalog v1 (~40 metrics)
+Bars are the instrument's own bar series ≤ T, indexed backward (`x_0` = T's
+bar, `x_1` = previous). `ac/ao/ah/al` adjusted close/open/high/low;
+`c/o/h/l/v` raw; `dv_i = c_i × v_i`; `r_i = ac_i/ac_{i+1} − 1` (daily
+return); `lr_i = ln(ac_i/ac_{i+1})`; `SMAn` = mean of last n adjusted
+closes; `ann = √252`. "n bars" windows end at T inclusive.
 
-**Returns / momentum** (adjusted closes; `r_n = c_T/c_{T-n} - 1`):
-`ret_1d, ret_5d, ret_21d, ret_63d, ret_126d, ret_252d`; `mom_12_1`
-(252→21 days ago, the classic momentum window excluding short-term
-reversal); `ret_overnight` (adj open T / adj close D₁ − 1, `at: open`);
-`ret_intraday` (close/open of T, raw).
+### Catalog v1 — exact spec
 
-**Gap** — `gap = ret_overnight` is THE motivating example for adjusted
-basis: across a 2:1 split ex-date, raw open/close ≈ −50% "gap"; the as-of-T
-adjusted basis reports the true economic overnight move. Plus
-`gap_freq_63d` (share of |gap| > 2%) and `abs_gap_med_63d` (median |gap|).
+**A. State** (levels, for predicates; unit tagged)
 
-**Trend / price position** (adjusted): `close_vs_sma20/50/200` (c/SMA − 1),
-`sma50_vs_sma200`; `high_252_dist`, `low_252_dist` (close vs 252-day extreme
-of adjusted high/low — the 52-week-high effect), `drawdown_252` (vs rolling
-peak close); `up_streak` (signed consecutive closes), `up_days_21d`.
+| id | definition | window | min_bars | notes |
+|---|---|---|---|---|
+| `close_raw` | `c_0` | 1 | 1 | as-traded; real-price predicates |
+| `dollar_adv21_log10` | `log10(mean(dv_1..dv_21))` | 21 | 22 | liquidity filter scale; excludes T |
+| `listed_bars` | count of bars ≤ T | all | 1 | |
+| `active_at_t` | symbol validity window contains T | — | 1 | boolean |
 
-**Volatility** (log returns, annualized √252): `vol_21d, vol_63d`,
-`vol_ratio_21_63` (term structure), `parkinson_21d` (from ln(H/L)², factors
-cancel), `atr_pct_14` (true range with adjusted prev close, over close),
-`max_abs_ret_21d` (the MAX/lottery effect), `range_pct` ((H−L)/C of T),
-`clv` (close location in T's range, null when H=L).
+**B. Returns / momentum** (basis adj, dimensionless)
 
-**Volume / liquidity** (dollar volume): `dollar_adv21_log10` (level, USD/CNY
-tagged), `rvol_21d` (T's dollar volume / 21-day average),
-`volume_trend_5_63` (ADV5/ADV63), `amihud_21d` (mean |ret|/dollar volume,
-unit-tagged per 1e6), `suspended_days_63d` (scope-calendar open days with no
-bar ÷ 63 — ~0 for US, meaningful for CN).
+| id | definition | min_bars |
+|---|---|---|
+| `ret_1d` | `ac_0/ac_1 − 1` | 2 |
+| `ret_5d` | `ac_0/ac_5 − 1` | 6 |
+| `ret_21d` | `ac_0/ac_21 − 1` | 22 |
+| `ret_63d` | `ac_0/ac_63 − 1` | 64 |
+| `ret_126d` | `ac_0/ac_126 − 1` | 127 |
+| `ret_252d` | `ac_0/ac_252 − 1` | 253 |
+| `mom_12_1` | `ac_21/ac_252 − 1` (momentum ex short-term reversal) | 253 |
+| `ret_intraday` | `c_0/o_0 − 1` (raw, same bar) | 1 |
 
-**Events** (visibility-honest): `days_since_split`, `days_since_dividend`
-(bar-days since last ex ≤ T); `declared_ex_days` (open days to the nearest
-ex_date > T *whose declaration_date ≤ T*; null when nothing is knowably
-scheduled); `div_yield_ttm` = Σ per-event yields (each event's
-`cash / raw prev close in its own era`) over the trailing 252 bars —
-era-safe without share conversions, dimensionless.
+**C. Gap** (basis adj; `gap` is `available_at: 'open'`)
 
-**Market context (US v1)**: `beta_63_spy`, `corr_63_spy`, `idio_vol_63`
-(residual vol after the SPY beta), `rel_ret_21`, `rel_ret_63` (return minus
-SPY's); **representative ETFs**: top-3 by `corr_63` of daily adjusted
-returns against a curated ~20-ETF liquid list (`SPY QQQ IWM DIA` + the 11
-SPDR sectors + `SMH XBI KRE XOP`, in `acquisition/us-context-etfs.json`,
-owner-vetoable), each with its beta. Derived from our own bars — no new
-vendor feed, no membership data to go stale. CN context: **deferred** —
-indices aren't hooked up and the CN sample holds no ETFs; the context
-section is explicitly null for `cn_stocks`, never faked.
+| id | definition | min_bars |
+|---|---|---|
+| `gap` | `ao_0/ac_1 − 1` — overnight move on an adjusted basis; across a split ex-date this is the true economic gap, not −50% | 2 |
+| `gap_freq_63d` | share of last 63 bars with `abs(gap_i) > 0.02` | 64 |
+| `abs_gap_med_63d` | `median(abs(gap_i))`, last 63 bars | 64 |
 
-**Identity / state** (levels): `close_raw` (as-traded, for predicates),
-`listed_bars` (count ≤ T), `active_at_t` (listing window contains T).
+**D. Trend / price position** (basis adj)
 
-### Intraday T (phase VT-P5, thin by design)
+| id | definition | min_bars |
+|---|---|---|
+| `close_vs_sma20` | `ac_0/SMA20 − 1` | 20 |
+| `close_vs_sma50` | `ac_0/SMA50 − 1` | 50 |
+| `close_vs_sma200` | `ac_0/SMA200 − 1` | 200 |
+| `sma50_vs_sma200` | `SMA50/SMA200 − 1` (regime) | 200 |
+| `high_252_dist` | `ac_0/max(ah_0..ah_251) − 1` (52-week-high effect) | 252 |
+| `low_252_dist` | `ac_0/min(al_0..al_251) − 1` | 252 |
+| `drawdown_252` | `ac_0/max(ac_0..ac_251) − 1` | 252 |
+| `up_streak` | signed run length: consecutive `ac_i > ac_{i+1}` (negative for down; 0 if unchanged) | 2 |
+| `up_days_21d` | share of last 21 bars with `r_i > 0` | 22 |
 
-Same concept, minute granularity, T = (date, minute): `vwap_dist` (close vs
-session VWAP so far), `session_range_pos`, `session_rvol_pace` (cumulative
-volume vs same-minute average of prior sessions), `minutes_since_open`,
-`gap` (known at open). Only ~4 days of minute history exist yet — the
-algorithms are still built truthfully; history depth is a data decision,
-not an algorithm one.
+**E. Volatility** (log returns; annualized where noted)
+
+| id | definition | min_bars |
+|---|---|---|
+| `vol_21d` | `stdev(lr_0..lr_20) × ann` | 22 |
+| `vol_63d` | `stdev(lr_0..lr_62) × ann` | 64 |
+| `vol_ratio_21_63` | `vol_21d / vol_63d` (term structure) | 64 |
+| `parkinson_21d` | `sqrt(mean(ln(h_i/l_i)²)/(4·ln2)) × ann`, last 21 bars, raw h/l (factors cancel); bars with h=l contribute 0 | 21 |
+| `atr_pct_14` | `mean(TR_0..TR_13)/ac_0`, `TR_i = max(ah_i, ac_{i+1}) − min(al_i, ac_{i+1})` | 15 |
+| `max_abs_ret_21d` | `max(abs(r_i))`, last 21 (MAX/lottery effect) | 22 |
+| `range_pct` | `(h_0 − l_0)/c_0` (raw) | 1 |
+| `clv` | `(2c_0 − h_0 − l_0)/(h_0 − l_0)`; null when `h_0 = l_0` | 1 |
+
+**F. Volume / liquidity** (basis dollar — split-invariant)
+
+| id | definition | min_bars |
+|---|---|---|
+| `rvol_21d` | `dv_0 / mean(dv_1..dv_21)` (today vs trailing avg, T excluded from the average) | 22 |
+| `volume_trend_5_63` | `mean(dv_0..dv_4)/mean(dv_0..dv_62)` | 63 |
+| `amihud_21d` | `mean(abs(r_i)/dv_i) × 1e6`, last 21 bars (unit: per 1e6 currency) | 22 |
+| `suspended_days_63d` | share of the last 63 *scope-calendar open days* ≤ T with no bar; null if listed (per symbol validity) < 63 open days | — |
+
+**G. Events** (visibility-honest)
+
+| id | definition | min_bars |
+|---|---|---|
+| `days_since_split` | bars since last split `ex_date <= T`; null if none | 1 |
+| `days_since_dividend` | bars since last cash dividend `ex_date <= T`; null if none | 1 |
+| `declared_ex_days` | scope-calendar open days from T to the nearest `ex_date > T` with `declaration_date <= T`; null when nothing knowably scheduled | 1 |
+| `div_yield_ttm` | `Σ (cash_e / c(prev bar before ex_e))` over dividends with ex in the last 252 bars — a sum of per-event yields, each measured in its own price era: dimensionless and split-safe with no share conversion | 253 |
+
+**H. Context & residuals** (`us_stocks` v1; for `cn_stocks` the whole
+family is `{value: null, reason: 'no_market_baseline'}` — explicit, never
+faked. See Residualization below.)
+
+| id | definition | min_bars |
+|---|---|---|
+| `beta_63_spy` | `cov(lr, lr_SPY)/var(lr_SPY)`, last 63 aligned bars | 64 |
+| `corr_63_spy` | Pearson corr of the same series | 64 |
+| `resid_ret_21_spy` | `exp(Σ_{i<21} e_i) − 1`, `e_i = lr_i − β̂·lr_SPY,i`, β̂ = `beta_63_spy` | 64 |
+| `resid_ret_63_spy` | `exp(Σ_{i<63} e_i) − 1` | 64 |
+| `idio_vol_63_spy` | `stdev(e_0..e_62) × ann` | 64 |
+| `rel_ret_21` | `ret_21d − ret_21d(SPY)` | 22 |
+| `rel_ret_63` | `ret_63d − ret_63d(SPY)` | 64 |
+| `tracking_etf` | argmax `corr_63` over the curated ETF list (as-of-T, trailing bars only); value = ETF symbol | 64 |
+| `tracking_corr_63` | that max correlation | 64 |
+| `tracking_beta_63` | β vs the tracking ETF | 64 |
+| `resid_ret_21_tracking` | as `resid_ret_21_spy` with the tracking ETF baseline | 64 |
+| `resid_ret_63_tracking` | 〃 63d | 64 |
+| `idio_vol_63_tracking` | 〃 idio vol | 64 |
+
+Total: 47 metrics.
+
+## Residualization (the point of the tracking ETF)
+
+Purpose: separate a stock's own movement from co-movement with a named
+baseline, so research can ask "did this stock move, or did its market/
+sector move it?" **"True" idiosyncratic movement is a modeling opinion** —
+so v1 makes the model explicit and small rather than pretending neutrality:
+
+- **Two named baselines**, both reported: `spy` (the market proxy, per the
+  bootstrap decision to use SPY until indices are hooked up) and
+  `tracking` (the best trailing-correlation ETF from a curated list). Every
+  residual metric carries its baseline in the id.
+- **Model:** daily log-return regression through the origin,
+  `β̂ = cov/var` over the trailing 63 aligned bars ending at T; residual
+  `e_i = lr_i − β̂·lr_b,i`. No intercept, no shrinkage, no multi-factor in
+  v1 — those are research-layer refinements over the same primitives.
+- **Alignment:** join on market_date over the stock's own bar dates;
+  baseline bars come from the same `adjusted_bars_for` macro (ETFs are
+  ordinary instruments in facts — SPY, QQQ, sector SPDRs are already
+  present with full bars). A date where the baseline lacks a bar drops out
+  of the pair-window (counted in `bars_available`).
+- **As-of honesty:** the tracking ETF is *selected* at T from trailing data
+  only, and β̂ uses trailing bars only, so residual metrics obey truncation
+  invariance like everything else.
+- **Curated list** (`acquisition/us-context-etfs.json`, one-line rationale
+  per entry, owner-vetoable): `SPY QQQ IWM DIA` + sector SPDRs
+  `XLK XLF XLE XLV XLI XLY XLP XLB XLRE XLU XLC` + industry proxies
+  `SMH XBI KRE XOP`. ~19 symbols. Resolve symbol → instrument at T via the
+  symbol validity window (`valid_from <= T < valid_to`), never bare
+  current-symbol lookup.
+- **Documented caveat:** the list itself is today's survivors; using the
+  *label* as a tradable historical signal is out of bounds and the docs say
+  so. Prices/correlations are period-correct.
 
 ## Surfaces
 
 - **API:** `GET /api/instruments/:id/view-at?t=YYYY-MM-DD` →
-  `{t, available_at: 'close', metrics: [{id, family, value, bars_available,
-  reason?}], context: {...} | null}`. Forward is opt-in and clearly labeled:
-  `&forward=1&entry=next_open` → `forward: [{horizon, ...}]` under a
-  `hindsight: true` key — the UI must render it visually separated from
-  at-T knowledge.
-- **UI (Instruments page):** a "view at T" control — date input plus
-  click-on-chart to set T; a vertical T marker on the chart; a panel grouped
-  by family rendering every catalog metric (nulls shown with their reason,
-  not hidden); a separate, visually distinct forward block ("what happened
-  next — hindsight"). Works identically for daily bars of AAPL and 600519.
+  `{t, available_at: 'close', metrics: [{id, family, value,
+  bars_available, reason?, unit?}], context_baselines: {spy, tracking} |
+  null}`. Forward is opt-in and labeled:
+  `&forward=1&entry=next_open|t_close` adds
+  `forward: {hindsight: true, entry_basis, rows: [...]}`. Validation via
+  zod like existing endpoints; T must be a bar date of the instrument
+  (404-style error naming the nearest valid dates otherwise).
+- **UI (Instruments page):** "view at T" control — date input + chart-click
+  sets T; vertical T marker on the chart; metric panel grouped by family
+  (nulls rendered with their reason, not hidden); forward block visually
+  separated and labeled "what happened next — hindsight". Identical for
+  AAPL and 600519 (600519 shows the context family as null with its
+  reason).
 
 ## Explicitly NOT in v1
 
-- **No persistence/caching.** Same doctrine as adjusted bars: algorithm
-  first, snapshot later behind a watermark once recomputation cost is felt
-  (a `computed.metrics_at_cache` shaped like `bars_daily_adjusted_cache` is
-  the anticipated later stage).
-- **No screening/ranking engine** (metrics across all instruments at T) —
-  that is the next research concept and will reuse this catalog; v1's
-  engine is per-instrument.
-- **No execution realism** (fees, T+1, limits, cash-tally dividends), no
-  z-scoring/winsorizing, no CN market context, no fundamental data
-  (earnings/shares outstanding are not ingested; turnover-based metrics wait
-  for that decision).
+- No persistence/caching (later: a watermarked `computed.metrics_at_cache`
+  shaped like the adjusted-bars cache, only once a real consumer makes
+  recompute cost visible).
+- No cross-market screening at T (next concept; reuses this catalog).
+- No execution realism (fees, T+1, price limits, cash-tally dividends).
+- No multi-factor residualization, z-scores, winsorizing.
+- No fundamentals (shares outstanding, earnings) — separate ingestion
+  decision.
+- No schema changes at all: v1 touches no `db/schema.sql` table; it is
+  TypeScript + SQL over existing facts/computed objects.
+- Intraday-T metrics: phase VT-P5, after daily proves the shape (only ~4
+  days of minute history exist; algorithms would be truthful but thin).
 
-## Milestones (PR-sized)
+## Milestones (PR-sized, in order)
 
-- **VT-P1 — forward-returns primitive + visibility contract.**
-  `server/forward-returns.ts`; fixture tests: anchor invariance, delisting
-  flag (FOXO-style), CN suspension staleness, entry bases; plus the
-  truncation-invariance test for the backward view (build fixture facts,
-  compute at T, land post-T raw, rebuild, recompute — byte-equal).
-- **VT-P2 — metrics catalog + engine.** `core/metrics-catalog.ts`,
-  `server/metrics-at.ts` (one SQL pass); hand-checked fixture values to 1e-9
-  for every formula, windows spanning a split+dividend; the split-day gap
-  sanity case; 600519 parity (same row schema, context null).
-- **VT-P3 — market context.** Curated ETF list, beta/corr/idio-vol vs SPY,
-  top-3 representative ETFs; tests on synthetic correlated series.
-- **VT-P4 — API + UI + docs.** `view-at` endpoint, instrument-page panel and
-  T marker, hindsight-separated forward block; data-model doc gains a
-  "view at T" section; bootstrap plan status updated; live demo evidence on
-  AAPL and 600519.
-- **VT-P5 (later) — intraday-T subset.** After daily proves the shape.
+- **VT-P1 — forward returns + visibility contract.**
+  `server/forward-returns.ts` + tests: anchor invariance (anchor = D, D+5,
+  full), delisting flag (tape-ends fixture), CN suspension staleness, both
+  entry bases, `no_entry_bar` edge, MAE/MFE hand-check; plus the
+  truncation-invariance harness (fixture: compute at T → land post-T raw →
+  rebuild facts → recompute → byte-equal) covering the backward view.
+- **VT-P2 — catalog + engine.** `core/metrics-catalog.ts`,
+  `server/metrics-at.ts`; fixture with a split AND a cash dividend inside
+  the windows, every formula asserted to 1e-9; split-day gap sanity case;
+  insufficient-window null per family; 600519 parity (same row schema,
+  context family null-with-reason).
+- **VT-P3 — residualization + context.** Curated ETF json; SPY + tracking
+  baselines, β/corr/residual/idio metrics; synthetic test (stock =
+  1.5×baseline + known noise → β̂ ≈ 1.5, residual metrics recover the
+  noise); tracking selection as-of honesty test (selection flips only when
+  trailing data says so).
+- **VT-P4 — API + UI + docs + live evidence.** `view-at` endpoint +
+  instrument-page panel + T marker + hindsight block; `docs/data-model.md`
+  gains a "view at T" section; bootstrap plan status updated; live spot
+  demo documented for AAPL (a 2025 date, values independently recomputed)
+  and 600519 (a suspension-window CN name for `suspended_days_63d` if
+  present in the sample).
+- **VT-P5 (later, not now)** — intraday-T subset (`vwap_dist`,
+  `session_range_pos`, `session_rvol_pace`, `minutes_since_open`).
 
-## Acceptance contract
+## Acceptance contract (all objectively testable)
 
 1. **Truncation invariance:** metrics_at(T) and the backward view are
-   byte-identical between the full fixture database and one rebuilt from
-   raw ≤ T only.
+   identical between the full fixture database and one rebuilt from raw
+   ≤ T only.
 2. **Anchor invariance:** forward returns identical for any adjustment
-   anchor ≥ horizon date (test at anchor = D, D+5, full history).
+   anchor ≥ horizon date.
 3. **Hand-checked math:** every catalog formula asserted to 1e-9 on a
-   synthetic series that spans a split AND a cash dividend inside the
-   metric windows; one real spot-check documented (AAPL around
-   2024-08 vs independently computed values).
-4. **Split-day gap sanity:** synthetic 2:1 split ex T → naive raw gap
-   ≈ −50%, catalog `gap` equals the true overnight move.
-5. **Survivorship honesty:** forward returns from T near a delisting return
-   flagged truncated results; the instrument never silently vanishes.
-6. **No-lookahead events:** `declared_ex_days` is null when the dividend's
-   declaration_date > T even though its ex_date is near; a split is never
-   "known" before its ex-date.
-7. **Source-neutral:** identical metric row schema for AAPL and 600519;
-   `suspended_days_63d` > 0 on a CN suspension fixture; context null for CN
-   with an explicit reason, not absence.
-8. **Catalog discipline:** every metric declares family, window, min_bars,
-   availability, unit; the insufficient-window null path is tested for at
-   least one metric per family.
+   synthetic series spanning a split and a dividend inside the windows;
+   one real AAPL spot-check documented with independent arithmetic.
+4. **Split-day gap sanity:** synthetic 2:1 split ex T → naive raw
+   open/prev-close ≈ −50%; catalog `gap` equals the true overnight move.
+5. **Survivorship honesty:** forward from T near a delisting returns
+   flagged, truncated results; never a silent drop.
+6. **No-lookahead events:** `declared_ex_days` null when declaration_date
+   > T despite a near ex_date; splits never "known" pre-ex.
+7. **Residual sanity:** on stock = 1.5×baseline + noise, `beta_63` ≈ 1.5
+   and residual metrics match the injected noise to tolerance; all
+   baseline selection/estimation uses trailing bars only (covered by the
+   truncation harness).
+8. **Source-neutral:** identical metric row schema for AAPL and 600519;
+   `suspended_days_63d` > 0 on a CN suspension fixture; CN context family
+   null with reason `no_market_baseline`.
+9. **Catalog discipline:** every metric declares family, window, min_bars,
+   availability, basis, unit; the null path is tested at least once per
+   family; the API returns exactly the catalog's ids, no more, no fewer.
 
-## Owner decisions
+## Owner decisions (resolved 2026-07-10 unless vetoed)
 
-1. Default horizons `{1, 5, 21, 63, 126, 252}` and default entry basis
-   `next_open` — confirm or amend.
-2. The ~20-ETF context list (curated into `acquisition/us-context-etfs.json`
-   with one-line rationales, like the CN universe) — sign off list.
-3. Metric catalog cuts/additions — anything you use personally that is
-   missing, or families to drop for v1.
-4. UI placement: panel on the existing instrument page (recommended) vs a
-   separate research tab.
+1. Horizons `{1, 5, 21, 63, 126, 252}`, default entry `next_open` —
+   approved as recommended.
+2. Context ETF list — implementer curates
+   `acquisition/us-context-etfs.json` with rationales; flagged prominently
+   in the VT-P3 report for owner veto, non-blocking (CN-universe pattern).
+3. Catalog — the 47 metrics above are the approved v1 set; additions go
+   through a plan amendment, not ad-hoc code.
+4. UI placement — panel on the existing instrument page.
 
 ## Risks / notes
 
-- **Metric correctness is concentration risk** — one wrong window boundary
-  poisons research silently. Mitigation is the hand-checked fixture per
-  formula and truncation invariance; no metric ships without both.
-- **Recompute cost** at ~500 bars × ~40 metrics per (instrument, T) is
-  milliseconds-scale in DuckDB; the cache stage is deliberately deferred
-  until a real consumer (screening at T across the whole market) makes cost
-  visible.
-- **Context ETFs are themselves survivors** — correlation against today's
-  ETF list at a historical T is mild hindsight in *labeling* (not in
-  price data). Acceptable for context display; documented so research never
-  uses the label as a tradable signal.
+- **Metric correctness is concentration risk** — a wrong window boundary
+  poisons research silently. No metric ships without its hand-checked
+  fixture value and the truncation harness passing.
+- **Per-call cost** (~500 bars × 47 metrics + 2 baseline series) is
+  milliseconds-scale in DuckDB; the cache stage is deferred until
+  screening-at-T makes cost real.
+- **Windows are bar-count windows** (except `suspended_days_63d` and
+  `declared_ex_days`, which are calendar-based by definition). For a
+  suspended CN name, 63 bars may span far more than 63 calendar days —
+  `bars_available` plus `suspended_days_63d` make that visible rather than
+  hidden.
