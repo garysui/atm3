@@ -339,3 +339,11 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   suspended CN name, 63 bars may span far more than 63 calendar days —
   `bars_available` plus `suspended_days_63d` make that visible rather than
   hidden.
+
+## Implementation notes
+
+- 2026-07-10, VT-P1 interpretation: horizon dates are scope-calendar open
+  dates counted strictly after T. `next_open` enters on the first instrument
+  bar after T; a horizon before that delayed entry returns `no_entry_bar`.
+  MAE/MFE follow the specified `(E, D]` interval exactly, while `bars_used`
+  counts the entry bar through the carried valuation bar inclusively.
