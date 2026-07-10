@@ -289,7 +289,12 @@ Locked before any strategy/backtest code exists:
    received, split share scaling) — the forward-return function is built on
    these primitives in the research phase.
 
-## Next owner decision
+## Next — view at T
 
-Choose the first research/backtest slice. Expansion beyond the 42-code CN
-prototype and a production CN vendor decision remain separate commitments.
+The first research slice is planned in [view-at-t-plan.md](view-at-t-plan.md)
+(2026-07-10): the as-of-T visibility contract with truncation invariance as
+its law, the forward-returns primitive (survivorship-honest, anchor-
+invariant), a ~40-metric dimensionless catalog at T, correlation-derived ETF
+context, and a pick-T instrument-page panel. Compute-only in v1; the metric
+cache is a later stage. Expansion beyond the 42-code CN prototype and a
+production CN vendor decision remain separate commitments.
