@@ -162,6 +162,14 @@ test('rank-at: residual sort finds the idiosyncratic mover, not the beta', async
     assert.ok(byResid.universe.excluded_liquidity >= 1)
     assert.ok(byResid.gauges.median_abs_ret_z !== null)
 
+    // Omitting T resolves to the scope's data frontier — the Movers page
+    // loads the latest day without asking.
+    const latest = await rankAt(db.connection, {
+      scope: 'us_stocks', minDollarAdv: 1000,
+    })
+    assert.equal(latest.t, t)
+    assert.equal(latest.rows[0]?.symbol, 'MOVR')
+
     // Truncation invariance extends to the cross-section: landing a post-T
     // day and refreshing the cache must not change the ranking at T.
     const nextDate = openDates(n + 2).at(-1)!

@@ -77,7 +77,7 @@ const viewAtQuerySchema = z.object({
 })
 
 const rankAtQuerySchema = z.object({
-  t: z.iso.date(),
+  t: z.iso.date().optional(),
   scope: z.string().default('us_stocks'),
   sort: z.enum(rankSortKeys).optional(),
   min_adv: z.coerce.number().nonnegative().default(0),

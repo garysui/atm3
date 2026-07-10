@@ -20,20 +20,30 @@ export function Movers({ scope }: { scope: string }) {
     null,
   )
 
-  const key = t ? `${scope}|${t}|${sort}|${minAdv}` : null
+  // An empty T ranks the scope's latest data date (the server resolves it);
+  // the input adopts the resolved date so the page is never blank.
+  const key = `${scope}|${t || 'latest'}|${sort}|${minAdv}`
 
   useEffect(() => {
-    if (!t || !key) return
-
     let cancelled = false
+    const tParam = t ? `t=${t}&` : ''
     getJson<RankAtResponse>(
-      `/api/rank-at?t=${t}&scope=${scope}&sort=${sort}` +
+      `/api/rank-at?${tParam}scope=${scope}&sort=${sort}` +
         `&min_adv=${encodeURIComponent(minAdv || '0')}&limit=100`,
     )
       .then((data) => {
-        if (!cancelled) {
+        if (cancelled) return
+        setError(null)
+        if (!t) {
+          // Store under the resolved date's key, then adopt it into the
+          // input — the re-render finds the data already present.
+          setState({
+            key: `${scope}|${data.t}|${sort}|${minAdv}`,
+            data,
+          })
+          setT(data.t)
+        } else {
           setState({ key, data })
-          setError(null)
         }
       })
       .catch((cause: Error) => {
@@ -45,7 +55,7 @@ export function Movers({ scope }: { scope: string }) {
     }
   }, [t, key, scope, sort, minAdv])
 
-  const report = key && state?.key === key ? state.data : null
+  const report = state?.key === key ? state.data : null
 
   return (
     <div>
@@ -92,11 +102,8 @@ export function Movers({ scope }: { scope: string }) {
         )}
       </form>
 
-      {!t && <p className="muted">pick a trading date</p>}
       {error?.key === key && <p className="error">{error.message}</p>}
-      {t && !report && error?.key !== key && (
-        <p className="muted">ranking…</p>
-      )}
+      {!report && error?.key !== key && <p className="muted">ranking…</p>}
 
       {report && (
         <div>

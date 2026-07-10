@@ -60,14 +60,28 @@ export class RankAtDateError extends Error {
 export async function rankAt(
   connection: DuckDBConnection,
   options: {
-    t: string
+    // Omitted t resolves to the scope's data frontier (latest bar date).
+    t?: string
     scope: string
     sort?: RankSortKey
     minDollarAdv?: number
     limit?: number
   },
 ): Promise<RankAtResult> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(options.t)) {
+  let t = options.t
+  if (t === undefined) {
+    const frontier = await connection.runAndReadAll(
+      `select cast(max(market_date) as varchar) as last_date
+       from facts.bars_daily where market_scope = $scope`,
+      { scope: options.scope },
+    )
+    const lastDate = frontier.getRowObjectsJson()[0]?.last_date
+    if (lastDate === null || lastDate === undefined) {
+      throw new Error(`no bars in ${options.scope}`)
+    }
+    t = String(lastDate)
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) {
     throw new Error('t must be YYYY-MM-DD')
   }
   const minDollarAdv = options.minDollarAdv ?? 0
@@ -85,7 +99,7 @@ export async function rankAt(
       order by s.is_primary desc, s.valid_from desc
       limit 1
     `,
-    { scope: options.scope, t: options.t },
+    { scope: options.scope, t },
   )
   const spyId = spyResult.getRowObjectsJson()[0]?.instrument_id
   const baseline = spyId === undefined ? null : 'SPY'
@@ -113,12 +127,12 @@ export async function rankAt(
           as next_date
       from scoped
     `,
-    { scope: options.scope, t: options.t },
+    { scope: options.scope, t },
   )
   const gate = dateGate.getRowObjectsJson()[0]
   if (gate?.has_t !== true) {
     throw new RankAtDateError(
-      options.t,
+      t,
       gate?.previous_date === null || gate?.previous_date === undefined
         ? null
         : String(gate.previous_date),
@@ -289,7 +303,7 @@ export async function rankAt(
     `,
     {
       scope: options.scope,
-      t: options.t,
+      t,
       spy_id: spyId === undefined ? null : String(spyId),
       min_adv: minDollarAdv,
     },
@@ -327,7 +341,7 @@ export async function rankAt(
       `,
       {
         scope: options.scope,
-        t: options.t,
+        t,
         ...Object.fromEntries(ids.map((id, index) => [`id_${index}`, id])),
       },
     )
@@ -340,7 +354,7 @@ export async function rankAt(
   }
 
   return {
-    t: options.t,
+    t,
     scope: options.scope,
     baseline,
     sort,
