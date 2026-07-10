@@ -4,7 +4,6 @@ import {
   createSeriesMarkers,
   HistogramSeries,
   LineSeries,
-  PriceScaleMode,
   TickMarkType,
   type IChartApi,
   type ISeriesApi,
@@ -42,6 +41,27 @@ export type ChartEvent = {
 
 const upColor = 'rgba(38, 166, 154, 0.55)'
 const downColor = 'rgba(239, 83, 80, 0.55)'
+// Spike bars clipped by the capped volume scale render at full strength so
+// "off the chart" is visible at a glance.
+const upColorClipped = 'rgb(0, 121, 107)'
+const downColorClipped = 'rgb(198, 40, 40)'
+
+// The volume scale is capped near the 98th percentile instead of the max:
+// a handful of spike days would otherwise flatten every normal bar into
+// invisibility. Clipped spikes keep their exact value in the legend.
+function volumeScaleCap(bars: ChartBar[]): number {
+  const volumes = bars
+    .map((bar) => bar.volume ?? 0)
+    .filter((volume) => volume > 0)
+    .sort((a, b) => a - b)
+
+  if (volumes.length === 0) {
+    return 0
+  }
+
+  const p98 = volumes[Math.min(volumes.length - 1, Math.floor(volumes.length * 0.98))]
+  return p98 * 1.15
+}
 const smaPeriods = [20, 50, 200] as const
 const smaColors: Record<number, string> = {
   20: '#e08a00',
@@ -243,8 +263,8 @@ export function StockChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ChartHandle | null>(null)
   const shownRef = useRef<ChartBar[]>([])
+  const volumeCapRef = useRef(0)
   const [legend, setLegend] = useState('')
-  const [logScale, setLogScale] = useState(false)
   const [rthOnly, setRthOnly] = useState(true)
   const [showVwap, setShowVwap] = useState(true)
   const [smaOn, setSmaOn] = useState<number[]>([])
@@ -299,6 +319,10 @@ export function StockChart({
         priceScaleId: 'volume',
         lastValueVisible: false,
         priceLineVisible: false,
+        autoscaleInfoProvider: () =>
+          volumeCapRef.current > 0
+            ? { priceRange: { minValue: 0, maxValue: volumeCapRef.current } }
+            : null,
       },
       1,
     )
@@ -356,6 +380,7 @@ export function StockChart({
     }
 
     shownRef.current = shown
+    volumeCapRef.current = volumeScaleCap(shown)
     handle.candles.setData(
       shown.map((bar) => ({
         time: bar.date as Time,
@@ -366,11 +391,16 @@ export function StockChart({
       })),
     )
     handle.volume.setData(
-      shown.map((bar) => ({
-        time: bar.date as Time,
-        value: bar.volume ?? 0,
-        color: bar.close >= bar.open ? upColor : downColor,
-      })),
+      shown.map((bar) => {
+        const clipped = (bar.volume ?? 0) > volumeCapRef.current
+        const up = bar.close >= bar.open
+
+        return {
+          time: bar.date as Time,
+          value: bar.volume ?? 0,
+          color: clipped ? (up ? upColorClipped : downColorClipped) : up ? upColor : downColor,
+        }
+      }),
     )
     handle.markers.setMarkers(toMarkers(events, shown))
 
@@ -423,12 +453,6 @@ export function StockChart({
     }
   }, [shown, events, resetKey, mode, smaOn, showVwap, rthOnly])
 
-  useEffect(() => {
-    handleRef.current?.candles.priceScale().applyOptions({
-      mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
-    })
-  }, [logScale])
-
   const setRange = (months: number | null) => {
     const handle = handleRef.current
     const last = shown[shown.length - 1]
@@ -454,14 +478,6 @@ export function StockChart({
   return (
     <div>
       <div className="chart-toolbar muted">
-        <label>
-          <input
-            type="checkbox"
-            checked={logScale}
-            onChange={(event) => setLogScale(event.target.checked)}
-          />{' '}
-          log
-        </label>
         {mode === 'daily' && (
           <>
             {smaPeriods.map((period) => (
