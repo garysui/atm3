@@ -104,6 +104,13 @@ closes; `ann = √252`. "n bars" windows end at T inclusive.
 
 ### Catalog v1 — exact spec
 
+> **Looking for the CURRENT complete catalog?** These tables are the
+> approved v1.1 spec, kept as the historical record (later additions are
+> dated implementation notes, per the amendment discipline). The live,
+> always-current inventory — every metric and what it measures — is the
+> generated [metrics reference](metrics-reference.md); formulas and theory
+> are in the [glossary](glossary.md).
+
 **A. State** (levels, for predicates; unit tagged)
 
 | id | definition | window | min_bars | notes |
