@@ -351,3 +351,7 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   (40 non-context plus 13 context), not the stated total of 47. All named ids
   are implemented; none were cut to force the erroneous prose total. `stdev`
   uses sample standard deviation, matching DuckDB's `stddev` convention.
+- 2026-07-10, VT-P3: the owner-vetoable context list contains the 19 symbols
+  named in the plan. Its labels are today's survivors; period prices and
+  trailing selection are as-of-T honest, but list membership itself must not
+  be interpreted as a historically tradable signal.

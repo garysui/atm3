@@ -5,6 +5,7 @@ import {
   type MetricId,
 } from '../core/metrics-catalog.ts'
 import { ViewAtTDateError } from './forward-returns.ts'
+import { contextAt } from './context-at.ts'
 
 export type MetricReason =
   | 'insufficient_window'
@@ -390,10 +391,27 @@ export async function metricsAt(
     }
   })
 
+  const context = options.marketScope === 'us_stocks'
+    ? await contextAt(connection, {
+        instrumentId: options.instrumentId,
+        t: options.t,
+      })
+    : null
+  if (context) {
+    for (const metric of metrics) {
+      const contextValue = context.metrics[metric.id]
+      if (contextValue && metric.reason !== 'insufficient_window') {
+        metric.value = contextValue.value
+        metric.bars_available = contextValue.bars_available
+        metric.reason = contextValue.reason
+      }
+    }
+  }
+
   return {
     t: options.t,
     available_at: 'close',
     metrics,
-    context_baselines: null,
+    context_baselines: context?.baselines ?? null,
   }
 }

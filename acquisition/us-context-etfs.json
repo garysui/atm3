@@ -1,0 +1,24 @@
+{
+  "warning": "Owner-vetoable v1 context list. These are today's surviving labels; do not treat list membership itself as a historical tradable signal.",
+  "securities": [
+    { "symbol": "SPY", "rationale": "Broad US large-cap market proxy and named primary baseline." },
+    { "symbol": "QQQ", "rationale": "Nasdaq-100 growth and technology-heavy market proxy." },
+    { "symbol": "IWM", "rationale": "Russell 2000 small-cap market proxy." },
+    { "symbol": "DIA", "rationale": "Dow Jones Industrial Average blue-chip proxy." },
+    { "symbol": "XLK", "rationale": "Technology Select Sector SPDR." },
+    { "symbol": "XLF", "rationale": "Financial Select Sector SPDR." },
+    { "symbol": "XLE", "rationale": "Energy Select Sector SPDR." },
+    { "symbol": "XLV", "rationale": "Health Care Select Sector SPDR." },
+    { "symbol": "XLI", "rationale": "Industrial Select Sector SPDR." },
+    { "symbol": "XLY", "rationale": "Consumer Discretionary Select Sector SPDR." },
+    { "symbol": "XLP", "rationale": "Consumer Staples Select Sector SPDR." },
+    { "symbol": "XLB", "rationale": "Materials Select Sector SPDR." },
+    { "symbol": "XLRE", "rationale": "Real Estate Select Sector SPDR." },
+    { "symbol": "XLU", "rationale": "Utilities Select Sector SPDR." },
+    { "symbol": "XLC", "rationale": "Communication Services Select Sector SPDR." },
+    { "symbol": "SMH", "rationale": "Semiconductor industry proxy." },
+    { "symbol": "XBI", "rationale": "Biotechnology industry proxy." },
+    { "symbol": "KRE", "rationale": "Regional banking industry proxy." },
+    { "symbol": "XOP", "rationale": "Oil and gas exploration and production industry proxy." }
+  ]
+}
