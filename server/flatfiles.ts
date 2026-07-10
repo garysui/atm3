@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { weekdaysBetween } from '../core/dates.ts'
+import { latestPublishedMinuteDate } from '../core/publication.ts'
 import type { Atm3Db } from './db.ts'
 import { env } from './env.ts'
 import { logger } from './log.ts'
@@ -21,12 +22,16 @@ const bucket = 'flatfiles'
 const sourceId = 'polygon'
 const dataset = 'minute_aggs'
 
+// Minute flat files lag a session by hours — the window ends at the latest
+// PUBLISHED date, so a nightly run never demands a file that cannot exist
+// yet (review finding #1).
 export function intradayBackfillWindow(): { from: string; to: string } {
   const shared = backfillWindow()
+  const published = latestPublishedMinuteDate(new Date())
 
   return {
     from: env.ATM3_INTRADAY_BACKFILL_FROM ?? shared.from,
-    to: shared.to,
+    to: published < shared.to ? published : shared.to,
   }
 }
 

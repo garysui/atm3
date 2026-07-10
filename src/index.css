@@ -253,6 +253,11 @@ form {
   border-color: #d33;
 }
 
+.op-state.skipped {
+  background: #f0f0f0;
+  color: #666;
+}
+
 .op-result {
   font-family: ui-monospace, monospace;
   font-size: 11px;

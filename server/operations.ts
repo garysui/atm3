@@ -31,7 +31,7 @@ export type OperationStep = {
 }
 
 export type OperationState = {
-  state: 'idle' | 'queued' | 'running' | 'ok' | 'failed'
+  state: 'idle' | 'queued' | 'running' | 'ok' | 'failed' | 'skipped'
   startedAt?: string
   finishedAt?: string
   result?: unknown
@@ -168,8 +168,43 @@ export function createOperationsController(
   const states = new Map<string, OperationState>(
     steps.map((step) => [step.id, { state: 'idle' }]),
   )
-  const queue: string[] = []
+  const queue: Array<{ id: string; chainId: string | null }> = []
   let draining = false
+
+  // A failed step cancels the rest of its chain: rebuilding facts and
+  // caches from a failed ingest would spend minutes laundering stale input
+  // (review finding #4). Individually queued steps are unaffected.
+  function skipChain(chainId: string, failedId: string): void {
+    for (let index = queue.length - 1; index >= 0; index--) {
+      if (queue[index].chainId === chainId) {
+        const [{ id }] = queue.splice(index, 1)
+        states.set(id, {
+          state: 'skipped',
+          error: `skipped: upstream step ${failedId} failed`,
+        })
+      }
+    }
+  }
+
+  function enqueueOne(
+    id: string,
+    chainId: string | null,
+  ): { queued: boolean; reason?: string } {
+    if (!byId.has(id)) {
+      return { queued: false, reason: 'unknown operation' }
+    }
+
+    const current = states.get(id)?.state
+
+    if (current === 'queued' || current === 'running') {
+      return { queued: false, reason: `already ${current}` }
+    }
+
+    states.set(id, { state: 'queued' })
+    queue.push({ id, chainId })
+    void drain()
+    return { queued: true }
+  }
 
   async function drain(): Promise<void> {
     if (draining) {
@@ -180,16 +215,16 @@ export function createOperationsController(
 
     try {
       while (queue.length > 0) {
-        const id = queue.shift() as string
-        const step = byId.get(id) as OperationStep
+        const item = queue.shift() as { id: string; chainId: string | null }
+        const step = byId.get(item.id) as OperationStep
         const startedAt = new Date().toISOString()
-        states.set(id, { state: 'running', startedAt })
+        states.set(item.id, { state: 'running', startedAt })
 
         try {
-          const result = await withRun(db.connection, id, null, (runId) =>
+          const result = await withRun(db.connection, item.id, null, (runId) =>
             step.run({ db, runId }),
           )
-          states.set(id, {
+          states.set(item.id, {
             state: 'ok',
             startedAt,
             finishedAt: new Date().toISOString(),
@@ -197,13 +232,17 @@ export function createOperationsController(
           })
         } catch (cause) {
           const error = cause instanceof Error ? cause.message : String(cause)
-          states.set(id, {
+          states.set(item.id, {
             state: 'failed',
             startedAt,
             finishedAt: new Date().toISOString(),
             error,
           })
-          logger.error({ id, error }, 'operation failed')
+          logger.error({ id: item.id, error }, 'operation failed')
+
+          if (item.chainId) {
+            skipChain(item.chainId, item.id)
+          }
         }
       }
     } finally {
@@ -222,26 +261,14 @@ export function createOperationsController(
       return Object.fromEntries(states)
     },
     enqueue(id) {
-      if (!byId.has(id)) {
-        return { queued: false, reason: 'unknown operation' }
-      }
-
-      const current = states.get(id)?.state
-
-      if (current === 'queued' || current === 'running') {
-        return { queued: false, reason: `already ${current}` }
-      }
-
-      states.set(id, { state: 'queued' })
-      queue.push(id)
-      void drain()
-      return { queued: true }
+      return enqueueOne(id, null)
     },
     enqueueAll() {
+      const chainId = `chain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const queued: string[] = []
 
       for (const step of steps) {
-        if (this.enqueue(step.id).queued) {
+        if (enqueueOne(step.id, chainId).queued) {
           queued.push(step.id)
         }
       }

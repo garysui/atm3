@@ -18,6 +18,7 @@ import {
   type OperationStep,
 } from './operations.ts'
 import { createReadPool, type ReadPool } from './read-pool.ts'
+import { abortStaleRuns } from './runs.ts'
 
 // JSON API over facts + computed, and the owner of the database write lock:
 // UI queries run on a pool of reader connections while pipeline operations
@@ -94,6 +95,7 @@ export async function createApiServer(
   }
 
   const pool: ReadPool = createReadPool(readers)
+  await abortStaleRuns(db.connection)
   const operations = createOperationsController(db, options.operationSteps)
   const app = express()
   app.use(cors())

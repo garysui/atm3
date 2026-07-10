@@ -19,9 +19,15 @@ export type CacheRefreshResult = {
 
 const cachedPolicies = ['split', 'split_dividend'] as const
 
+// Freshness keys on the facts_generation id (bumped atomically by every
+// facts rebuild), so corrections that leave counts and max dates unchanged
+// still invalidate (review finding #2). Counts/max-dates stay in the
+// watermark as belt-and-suspenders against out-of-band writes.
 async function readWatermark(connection: DuckDBConnection): Promise<string> {
   const result = await connection.runAndReadAll(`
     select
+      (select coalesce(max(value), 'none') from ops.meta
+        where key = 'facts_generation') as generation,
       (select count(*) from facts.corporate_actions) as ca_count,
       (select coalesce(cast(max(ex_date) as varchar), '')
          from facts.corporate_actions) as ca_max,
@@ -32,7 +38,8 @@ async function readWatermark(connection: DuckDBConnection): Promise<string> {
   const row = result.getRowObjectsJson()[0] as Record<string, unknown>
 
   return (
-    `ca:${row.ca_count}:${row.ca_max}` +
+    `gen:${row.generation}` +
+    `|ca:${row.ca_count}:${row.ca_max}` +
     `|bars:${row.bar_count}:${row.bar_max}` +
     `|${ADJUSTMENT_COMPUTATION_VERSION}`
   )

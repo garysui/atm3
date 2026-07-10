@@ -2,6 +2,30 @@ import { randomUUID } from 'node:crypto'
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { logger } from './log.ts'
 
+// A crash leaves durable runs stuck at 'running' while the in-memory queue
+// evaporates. The server is the single writer, so at startup any 'running'
+// row is an orphan of a dead process — mark it aborted (review finding #6).
+export async function abortStaleRuns(
+  connection: DuckDBConnection,
+): Promise<number> {
+  const stale = await connection.runAndReadAll(
+    `select count(*) as n from ops.runs where status = 'running'`,
+  )
+  const count = Number(stale.getRowObjectsJson()[0]?.n ?? 0)
+
+  if (count > 0) {
+    await connection.run(`
+      update ops.runs
+      set status = 'aborted', finished_at = now(),
+          error = 'process exited while the run was in progress'
+      where status = 'running'
+    `)
+    logger.warn({ count }, 'marked orphaned runs as aborted')
+  }
+
+  return count
+}
+
 // Every job runs inside withRun so ops.runs is a complete history of what
 // touched the database, when, and how it ended.
 export async function withRun<T>(

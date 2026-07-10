@@ -3,7 +3,8 @@ import {
   polygonGet,
   polygonListPages,
 } from '../connectors/polygon.ts'
-import { addDays, addYears, weekdaysBetween } from '../core/dates.ts'
+import { addYears, weekdaysBetween } from '../core/dates.ts'
+import { latestCompletedTradingDate } from '../core/publication.ts'
 import type { Atm3Db } from './db.ts'
 import { env } from './env.ts'
 import { logger } from './log.ts'
@@ -17,14 +18,13 @@ export function todayUtc(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-// Owner decision 2026-07-08: default backfill window is 2 years, ending
-// yesterday (grouped daily for a date is published after that session ends).
+// Owner decisions: the window starts fixed at ATM3_BACKFILL_FROM
+// (2024-07-01) and ends at the last COMPLETED trading date in exchange
+// time — never the still-running session (see core/publication.ts).
 export function backfillWindow(): { from: string; to: string } {
-  const today = todayUtc()
-
   return {
-    from: env.ATM3_BACKFILL_FROM ?? addYears(today, -2),
-    to: env.ATM3_BACKFILL_TO ?? addDays(today, -1),
+    from: env.ATM3_BACKFILL_FROM ?? addYears(todayUtc(), -2),
+    to: env.ATM3_BACKFILL_TO ?? latestCompletedTradingDate(new Date()),
   }
 }
 

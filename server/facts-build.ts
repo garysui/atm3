@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { DuckDBConnection } from '@duckdb/node-api'
 import { classificationCaseSql } from '../core/instrument-types.ts'
@@ -15,6 +16,10 @@ import { logger } from './log.ts'
 
 export type BuildOptions = {
   dataDir?: string
+  // buildAllFacts wraps every builder in ONE transaction so readers never
+  // observe mixed generations and a mid-build failure rolls back wholesale
+  // (review finding #3); standalone builder calls manage their own.
+  transactional?: boolean
 }
 
 type BuildContext = {
@@ -59,7 +64,13 @@ async function count(ctx: BuildContext, sql: string): Promise<number> {
 async function inTransaction(
   ctx: BuildContext,
   fn: () => Promise<void>,
+  ownTransaction = true,
 ): Promise<void> {
+  if (!ownTransaction) {
+    await fn()
+    return
+  }
+
   await ctx.connection.run('begin transaction')
 
   try {
@@ -137,7 +148,7 @@ export async function buildExchanges(
       )
       group by exchange_mic
     `)
-  })
+  }, options.transactional ?? true)
 
   const exchanges = await count(ctx, 'select count(*) as n from facts.exchanges')
   logger.info({ exchanges }, 'built facts.exchanges')
@@ -215,7 +226,7 @@ export async function buildTradingDays(
         )
       group by date
     `)
-  })
+  }, options.transactional ?? true)
 
   const tradingDays = await count(
     ctx,
@@ -539,7 +550,7 @@ export async function buildIdentity(
         partition by identifier_type, identifier_value
       ) = 1
     `)
-  })
+  }, options.transactional ?? true)
 
   const instruments = await count(
     ctx,
@@ -686,7 +697,7 @@ export async function buildCorporateActions(
         on conflict do nothing
       `)
     }
-  })
+  }, options.transactional ?? true)
 
   const corporateActions = await count(
     ctx,
@@ -785,7 +796,7 @@ export async function buildBarsDaily(
       where instrument_id is null
       on conflict do nothing
     `)
-  })
+  }, options.transactional ?? true)
 
   const bars = await count(ctx, 'select count(*) as n from facts.bars_daily')
   const unresolved = await count(
@@ -796,15 +807,44 @@ export async function buildBarsDaily(
   return { bars, unresolved }
 }
 
+// One transaction end to end: readers see either the previous facts
+// generation or the new one, never a mix, and any failure rolls the whole
+// rebuild back. The facts_generation id commits atomically with the data —
+// cache freshness keys on it, so a rebuild from corrected raw invalidates
+// even when row counts and max dates are unchanged (review finding #2).
 export async function buildAllFacts(
   connection: DuckDBConnection,
   options: BuildOptions = {},
 ) {
-  const exchanges = await buildExchanges(connection, options)
-  const identity = await buildIdentity(connection, options)
-  const tradingDays = await buildTradingDays(connection, options)
-  const corporateActions = await buildCorporateActions(connection, options)
-  const bars = await buildBarsDaily(connection, options)
+  const inner: BuildOptions = { ...options, transactional: false }
+  await connection.run('begin transaction')
 
-  return { ...exchanges, ...identity, ...tradingDays, ...corporateActions, ...bars }
+  try {
+    const exchanges = await buildExchanges(connection, inner)
+    const identity = await buildIdentity(connection, inner)
+    const tradingDays = await buildTradingDays(connection, inner)
+    const corporateActions = await buildCorporateActions(connection, inner)
+    const bars = await buildBarsDaily(connection, inner)
+    await connection.run(
+      `insert or replace into ops.meta (key, value)
+       values ('facts_generation', $generation)`,
+      { generation: randomUUID() },
+    )
+    await connection.run('commit')
+
+    return {
+      ...exchanges,
+      ...identity,
+      ...tradingDays,
+      ...corporateActions,
+      ...bars,
+    }
+  } catch (error) {
+    try {
+      await connection.run('rollback')
+    } catch {
+      // The failed statement may have already aborted the transaction.
+    }
+    throw error
+  }
 }

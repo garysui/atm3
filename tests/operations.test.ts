@@ -95,6 +95,8 @@ test('operations queue: serialization, order, results, failures, history', async
     await waitForIdle(controller)
 
     // Every execution left a durable ops.runs row under the step id.
+    // (Note: op:boom is LAST in the registry, so enqueueAll above completed
+    // op:slow and op:fast before it failed.)
     const runs = await db.connection.runAndReadAll(`
       select job, status, count(*) as n
       from ops.runs
@@ -114,5 +116,60 @@ test('operations queue: serialization, order, results, failures, history', async
         { job: 'op:slow', status: 'ok', n: 2 },
       ],
     )
+  })
+})
+
+test('run-all fails fast: a failed step skips the rest of its chain', async () => {
+  await withTempDatabase(async (db) => {
+    const log: string[] = []
+    const steps: OperationStep[] = [
+      {
+        id: 'op:boom-first',
+        label: 'boom',
+        stage: 'raw',
+        description: 'fails immediately',
+        run: async () => {
+          throw new Error('ingest failed')
+        },
+      },
+      {
+        id: 'op:downstream-a',
+        label: 'a',
+        stage: 'facts',
+        description: 'must not run after upstream failure',
+        run: async () => {
+          log.push('downstream-a')
+        },
+      },
+      {
+        id: 'op:downstream-b',
+        label: 'b',
+        stage: 'computed',
+        description: 'must not run after upstream failure',
+        run: async () => {
+          log.push('downstream-b')
+        },
+      },
+    ]
+    const controller = createOperationsController(db, steps)
+
+    controller.enqueueAll()
+    await waitForIdle(controller)
+
+    const status = controller.status()
+    assert.equal(status['op:boom-first']?.state, 'failed')
+    assert.equal(status['op:downstream-a']?.state, 'skipped')
+    assert.equal(status['op:downstream-b']?.state, 'skipped')
+    assert.match(
+      String(status['op:downstream-a']?.error),
+      /upstream step op:boom-first failed/,
+    )
+    assert.deepEqual(log, []) // nothing downstream executed
+
+    // Individually queued steps are NOT chained to prior failures.
+    controller.enqueue('op:downstream-a')
+    await waitForIdle(controller)
+    assert.equal(controller.status()['op:downstream-a']?.state, 'ok')
+    assert.deepEqual(log, ['downstream-a'])
   })
 })

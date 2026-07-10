@@ -12,7 +12,7 @@ type OperationView = {
   stage: 'raw' | 'facts' | 'computed' | 'verify'
   description: string
   live?: {
-    state: 'idle' | 'queued' | 'running' | 'ok' | 'failed'
+    state: 'idle' | 'queued' | 'running' | 'ok' | 'failed' | 'skipped'
     startedAt?: string
     finishedAt?: string
     result?: unknown
@@ -67,6 +67,10 @@ function StateBadge({ step }: { step: OperationView }) {
 
   if (live?.state === 'failed') {
     return <span className="op-state failed">failed</span>
+  }
+
+  if (live?.state === 'skipped') {
+    return <span className="op-state skipped">skipped</span>
   }
 
   if (live?.state === 'ok') {
@@ -170,7 +174,8 @@ export function Pipeline() {
                             ` · ${step.lastRun.seconds}s`}
                         </div>
                       )}
-                      {step.live?.state === 'failed' && (
+                      {(step.live?.state === 'failed' ||
+                        step.live?.state === 'skipped') && (
                         <div className="error">{step.live.error}</div>
                       )}
                       {step.live?.state === 'ok' && (

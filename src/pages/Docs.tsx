@@ -1,11 +1,21 @@
 import { marked } from 'marked'
-import mermaid from 'mermaid'
 import { useEffect, useRef, useState } from 'react'
 import { getJson } from '../api.ts'
 
 type DocEntry = { name: string; title: string }
 
-mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
+// Mermaid is ~1 MB — loaded on demand the first time a doc actually
+// contains a diagram, not on app startup (review finding #8).
+let mermaidLoader: Promise<typeof import('mermaid').default> | null = null
+
+function loadMermaid(): Promise<typeof import('mermaid').default> {
+  mermaidLoader ??= import('mermaid').then((module) => {
+    module.default.initialize({ startOnLoad: false, theme: 'neutral' })
+    return module.default
+  })
+
+  return mermaidLoader
+}
 
 // In-doc relative markdown links must stay inside the SPA: `tech-stack.md`
 // becomes `#docs/tech-stack` (a path navigation would leave the app and 404
@@ -45,6 +55,12 @@ async function renderMermaidBlocks(
   isCancelled: () => boolean,
 ): Promise<void> {
   const blocks = [...container.querySelectorAll('code.language-mermaid')]
+
+  if (blocks.length === 0) {
+    return
+  }
+
+  const mermaid = await loadMermaid()
 
   for (const block of blocks) {
     // Doc switched mid-pass: stop wasting renders on an abandoned container.
