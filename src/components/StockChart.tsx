@@ -105,6 +105,14 @@ function formatBarTime(date: string | number): string {
   return `${etDay.format(at)} ${etClock.format(at)} ET`
 }
 
+function dailyTimeString(time: Time | undefined): string | null {
+  if (typeof time === 'string') return time
+  if (typeof time === 'object' && time !== null && 'year' in time) {
+    return `${time.year}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')}`
+  }
+  return null
+}
+
 function formatVolume(volume: number | null): string {
   if (volume === null || !Number.isFinite(volume)) {
     return '–'
@@ -263,20 +271,32 @@ export function StockChart({
   bars,
   events,
   resetKey,
+  selectedDate = null,
+  onDateSelect,
 }: {
   mode: 'daily' | 'intraday'
   bars: ChartBar[]
   events: ChartEvent[]
   resetKey: string
+  selectedDate?: string | null
+  onDateSelect?(date: string): void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ChartHandle | null>(null)
   const shownRef = useRef<ChartBar[]>([])
   const volumeCapRef = useRef(0)
+  const selectedDateRef = useRef<string | null>(selectedDate)
+  const onDateSelectRef = useRef(onDateSelect)
+  const updateTMarkerRef = useRef<() => void>(() => undefined)
   const [legend, setLegend] = useState('')
   const [rthOnly, setRthOnly] = useState(true)
   const [showVwap, setShowVwap] = useState(true)
   const [smaOn, setSmaOn] = useState<number[]>([])
+  const [tMarkerX, setTMarkerX] = useState<number | null>(null)
+
+  useEffect(() => {
+    onDateSelectRef.current = onDateSelect
+  }, [onDateSelect])
 
   // Regular trading hours: 09:30 through the 16:00 auction minute inclusive
   // (the official close prints there).
@@ -370,10 +390,29 @@ export function StockChart({
       }
     }
 
+    const updateTMarker = () => {
+      const date = selectedDateRef.current
+      const coordinate = date
+        ? chart.timeScale().timeToCoordinate(date as Time)
+        : null
+      setTMarkerX(coordinate === null ? null : coordinate)
+    }
+    updateTMarkerRef.current = updateTMarker
+    const onVisibleRange = () => updateTMarker()
+    const onClick = (param: MouseEventParams<Time>) => {
+      if (mode !== 'daily') return
+      const date = dailyTimeString(param.time)
+      if (date) onDateSelectRef.current?.(date)
+    }
+
     chart.subscribeCrosshairMove(onCrosshair)
+    chart.subscribeClick(onClick)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRange)
 
     return () => {
       chart.unsubscribeCrosshairMove(onCrosshair)
+      chart.unsubscribeClick(onClick)
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRange)
       handleRef.current = null
       chart.remove()
     }
@@ -460,7 +499,18 @@ export function StockChart({
       handle.chart.timeScale().fitContent()
       handle.fittedFor = fitKey
     }
-  }, [shown, events, resetKey, mode, smaOn, showVwap, rthOnly])
+    selectedDateRef.current = selectedDate
+    requestAnimationFrame(() => updateTMarkerRef.current())
+  }, [
+    shown,
+    events,
+    resetKey,
+    mode,
+    smaOn,
+    showVwap,
+    rthOnly,
+    selectedDate,
+  ])
 
   const setRange = (months: number | null) => {
     const handle = handleRef.current
@@ -536,7 +586,15 @@ export function StockChart({
       <div className="chart-wrap">
         <div className="chart-legend">{legend}</div>
         {shown.length === 0 && <p className="muted">(no bars)</p>}
-        <div ref={containerRef} className="chart chart-tall" />
+        {mode === 'daily' && tMarkerX !== null && selectedDate && (
+          <div className="chart-t-marker" style={{ left: tMarkerX }}>
+            <span>T {selectedDate}</span>
+          </div>
+        )}
+        <div
+          ref={containerRef}
+          className={`chart chart-tall${onDateSelect ? ' chart-selectable' : ''}`}
+        />
       </div>
     </div>
   )

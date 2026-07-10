@@ -289,12 +289,21 @@ Locked before any strategy/backtest code exists:
    received, split share scaling) — the forward-return function is built on
    these primitives in the research phase.
 
-## Next — view at T
+## View at T
 
-The first research slice is planned in [view-at-t-plan.md](view-at-t-plan.md)
-(2026-07-10): the as-of-T visibility contract with truncation invariance as
-its law, the forward-returns primitive (survivorship-honest, anchor-
-invariant), a ~40-metric dimensionless catalog at T, correlation-derived ETF
-context, and a pick-T instrument-page panel. Compute-only in v1; the metric
-cache is a later stage. Expansion beyond the 42-code CN prototype and a
-production CN vendor decision remain separate commitments.
+Status: VT-P1 through VT-P4 done 2026-07-10. The first research slice in
+[view-at-t-plan.md](view-at-t-plan.md) now provides an as-of-T metric engine,
+an opt-in forward-return scorer, SPY/tracking-ETF residual context, a validated
+API, and the Instruments-page date/chart control with an explicit hindsight
+band. It is compute-only; no schema or cache was added.
+
+The exact plan tables contained 53 ids despite saying 47. All 40 instrument
+and 13 context ids shipped, with null reasons and catalog/API equality tested.
+Truncation and forward-anchor invariance, split-day gap math, event visibility,
+delisting/suspension flags, synthetic residual recovery, source-neutral CN
+shape, and all catalog formulas are fixture-tested. Live AAPL and 600519
+evidence is recorded in the plan's dated implementation notes and available
+through `npm run verify:view-at` with the development server stopped.
+
+VT-P5 intraday-at-T remains later work. Expansion beyond the 42-code CN
+prototype and a production CN vendor decision remain separate commitments.

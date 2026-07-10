@@ -5,6 +5,7 @@ import {
   type InstrumentDetail,
   type MinuteBarsResponse,
   type Row,
+  type ViewAtResponse,
 } from '../api.ts'
 import {
   StockChart,
@@ -12,6 +13,7 @@ import {
   type ChartEvent,
 } from '../components/StockChart.tsx'
 import { DataTable } from '../components/DataTable.tsx'
+import { ViewAtPanel } from '../components/ViewAtPanel.tsx'
 
 const policies = ['none', 'split', 'split_dividend'] as const
 
@@ -30,6 +32,22 @@ export function Instruments({
   const [policy, setPolicy] = useState<(typeof policies)[number]>('split_dividend')
   const [asOf, setAsOf] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [viewAtSelection, setViewAtSelection] = useState<{
+    id: string
+    date: string
+  } | null>(null)
+  const [includeForward, setIncludeForward] = useState(false)
+  const [entryBasis, setEntryBasis] = useState<'next_open' | 't_close'>(
+    'next_open',
+  )
+  const [viewAtState, setViewAtState] = useState<{
+    key: string
+    data: ViewAtResponse
+  } | null>(null)
+  const [viewAtError, setViewAtError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
 
   // Fetched data is keyed by its request, so switching instruments/policies
   // derives "loading" instead of resetting state inside effects.
@@ -61,6 +79,11 @@ export function Instruments({
     instrumentId && minuteDay
       ? `${instrumentId}|${minuteDay}|${policy}|${asOf}`
       : null
+  const viewAtDate =
+    viewAtSelection?.id === instrumentId ? viewAtSelection.date : ''
+  const viewAtKey = instrumentId && viewAtDate
+    ? `${instrumentId}|${viewAtDate}|${includeForward}|${entryBasis}`
+    : null
 
   const search = async (event?: { preventDefault(): void }) => {
     event?.preventDefault()
@@ -174,6 +197,39 @@ export function Instruments({
       cancelled = true
     }
   }, [instrumentId, minuteDay, minuteBarsKey, policy, asOf])
+
+  useEffect(() => {
+    if (!instrumentId || !viewAtDate || !viewAtKey) return
+
+    let cancelled = false
+    const forward = includeForward
+      ? `&forward=1&entry=${entryBasis}`
+      : ''
+    getJson<ViewAtResponse>(
+      `/api/instruments/${instrumentId}/view-at?t=${viewAtDate}${forward}`,
+    )
+      .then((data) => {
+        if (!cancelled) {
+          setViewAtState({ key: viewAtKey, data })
+          setViewAtError(null)
+        }
+      })
+      .catch((cause: Error) => {
+        if (!cancelled) {
+          setViewAtError({ key: viewAtKey, message: cause.message })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    instrumentId,
+    viewAtDate,
+    viewAtKey,
+    includeForward,
+    entryBasis,
+  ])
 
   const detail =
     instrumentId && detailState?.id === instrumentId ? detailState.data : null
@@ -362,8 +418,45 @@ export function Instruments({
             bars={dailyChartBars}
             events={[...chartEvents, ...renameEvents]}
             resetKey={`${instrumentId}|${asOf}`}
+            selectedDate={viewAtDate}
+            onDateSelect={(date) =>
+              setViewAtSelection({
+                id: String(instrument.instrument_id),
+                date,
+              })
+            }
           />
           {!bars && <p className="muted">loading bars…</p>}
+
+          <ViewAtPanel
+            t={viewAtDate}
+            dates={dailyChartBars.map((bar) => String(bar.date))}
+            report={
+              viewAtKey && viewAtState?.key === viewAtKey
+                ? viewAtState.data
+                : null
+            }
+            loading={Boolean(
+              viewAtKey &&
+              viewAtState?.key !== viewAtKey &&
+              viewAtError?.key !== viewAtKey,
+            )}
+            error={
+              viewAtKey && viewAtError?.key === viewAtKey
+                ? viewAtError.message
+                : null
+            }
+            includeForward={includeForward}
+            entryBasis={entryBasis}
+            onTChange={(date) =>
+              setViewAtSelection({
+                id: String(instrument.instrument_id),
+                date,
+              })
+            }
+            onForwardChange={setIncludeForward}
+            onEntryBasisChange={setEntryBasis}
+          />
 
           <h3>Intraday (minute bars)</h3>
           {!minuteDays && <p className="muted">loading…</p>}

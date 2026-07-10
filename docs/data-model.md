@@ -485,6 +485,47 @@ Why the cache exists (measured 2026-07-08): the full-market macro costs
 computes on the fly. Later artifacts (metrics, universes) follow the same
 pattern: algorithm first, cache only when profiling demands it.
 
+## View at T
+
+The first research surface is a compute-only view of one instrument at an
+exchange-local market date T. `GET /api/instruments/:id/view-at?t=YYYY-MM-DD`
+returns the exact catalog in `core/metrics-catalog.ts`; the Instruments page
+sets T from a date input or chart click. No result is stored.
+
+The backward half is end-of-day knowledge at T:
+
+- Bars are limited to `market_date <= T` and adjusted with
+  `computed.adjusted_bars_for(..., as_of := T)`.
+- Effective corporate actions require `ex_date <= T`; a future ex date is
+  visible only when its `declaration_date <= T`.
+- Every metric reports `bars_available`. A short window or guarded
+  denominator returns a null value with a reason, never a shortened formula.
+- The catalog contains 53 ids: 40 instrument metrics and 13 context metrics.
+  The approved plan's prose said 47, but its exact tables enumerate 53; all
+  named rows are retained.
+
+US context compares trailing aligned log returns with SPY and with the
+highest-correlation member of the 19-symbol ETF config. Betas, correlations,
+residual returns, relative returns, and idiosyncratic volatility use only
+bars through T. CN returns the same 13 rows with
+`reason: no_market_baseline`, preserving one source-neutral response shape.
+The curated ETF labels are current survivors; while their price windows and
+selection are as-of-T honest, config membership is not a historical-universe
+claim.
+
+Forward returns are a separate, opt-in hindsight block. Horizons are 1, 5,
+21, 63, 126, and 252 scope-calendar open days strictly after T, entered at
+the next instrument open by default (`t_close` is also supported). Returns,
+MAE, and MFE incorporate splits and cash dividends; missing entry bars,
+suspensions, and terminal tape ends remain explicit through reason, stale,
+and delisted fields. This future data never enters backward metrics or
+baseline selection.
+
+`npm run verify:view-at` checks AAPL and 600519 against the catalog and prints
+a compact live sample. Stop the development server first because the script
+opens DuckDB read-only. Fixture tests enforce the stronger law: landing raw
+data after T and rebuilding facts cannot change the backward response at T.
+
 ## Source precedence
 
 `facts.bars_daily` keeps `source_id` in the key, so two vendors can both state

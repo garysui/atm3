@@ -7,6 +7,7 @@ import test from 'node:test'
 import { createApiServer } from '../server/api.ts'
 import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
 import { A, seedFacts } from './fixtures.ts'
+import { metricsCatalog } from '../core/metrics-catalog.ts'
 
 const CN = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 
@@ -22,6 +23,21 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     try {
       await seedFacts(writer)
       await writer.connection.run(`
+        insert into facts.exchanges (
+          exchange_mic, name, market_scope, calendar_id, timezone, currency
+        ) values
+          ('XNAS', 'NASDAQ', 'us_stocks', 'us_equities', 'America/New_York', 'USD'),
+          ('XSHG', 'Shanghai', 'cn_stocks', 'cn_equities', 'Asia/Shanghai', 'CNY');
+        insert into facts.trading_days (
+          calendar_id, market_date, is_open, source_id
+        )
+        select 'us_equities', d, true, 'fixture'
+        from generate_series(date '2025-01-02', date '2026-12-31', interval 1 day) t(d)
+        where dayofweek(d) not in (0, 6)
+        union all
+        select 'cn_equities', d, true, 'fixture'
+        from generate_series(date '2025-01-02', date '2026-12-31', interval 1 day) t(d)
+        where dayofweek(d) not in (0, 6);
         insert into facts.instruments (
           instrument_id, asset_class, instrument_type, name,
           primary_market_scope, primary_exchange_mic, currency
@@ -170,6 +186,48 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     const asOf = await barsFor('policy=split_dividend&as_of=2025-01-02')
     assert.equal(asOf.bars.length, 1)
     assert.equal(asOf.bars[0]?.close, 100)
+
+    const viewAt = (await (
+      await fetch(`${base}/api/instruments/${A}/view-at?t=2025-01-03`)
+    ).json()) as {
+      t: string
+      metrics: Array<{ id: string }>
+      forward?: unknown
+    }
+    assert.equal(viewAt.t, '2025-01-03')
+    assert.deepEqual(
+      viewAt.metrics.map(({ id }) => id),
+      metricsCatalog.map(({ id }) => id),
+    )
+    assert.equal(viewAt.forward, undefined)
+
+    const withForward = (await (
+      await fetch(
+        `${base}/api/instruments/${A}/view-at?t=2025-01-02&forward=1&entry=t_close`,
+      )
+    ).json()) as {
+      forward: { hindsight: boolean; entry_basis: string; rows: unknown[] }
+    }
+    assert.equal(withForward.forward.hindsight, true)
+    assert.equal(withForward.forward.entry_basis, 't_close')
+    assert.equal(withForward.forward.rows.length, 6)
+
+    const cnViewAt = (await (
+      await fetch(`${base}/api/instruments/${CN}/view-at?t=2025-01-03`)
+    ).json()) as { metrics: Array<{ family: string; reason: string }> }
+    assert.ok(
+      cnViewAt.metrics
+        .filter(({ family }) => family === 'context')
+        .every(({ reason }) => reason === 'no_market_baseline'),
+    )
+    const invalidT = await fetch(
+      `${base}/api/instruments/${A}/view-at?t=2025-01-04`,
+    )
+    assert.equal(invalidT.status, 404)
+    assert.match(
+      String(((await invalidT.json()) as { error: string }).error),
+      /previous: 2025-01-03, next: 2025-01-06/,
+    )
 
     // Intraday endpoints: empty coverage answers cleanly (no minute data in
     // this fixture); bad dates are rejected.

@@ -1,7 +1,8 @@
 # View at T — plan (v1.1, 2026-07-10, executable spec)
 
-Status: PLAN, approved direction; written to be executed by another
-implementer without further design decisions. Supersedes v1 (same day):
+Status: IMPLEMENTED through VT-P4 on 2026-07-10; VT-P5 remains later work.
+This approved direction was written to be executed without further design
+decisions. Supersedes v1 (same day):
 market context is reframed as **residualization** — separating a stock's
 movement from named baselines — and the metric catalog is now an exact
 spec, not prose.
@@ -355,3 +356,11 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   named in the plan. Its labels are today's survivors; period prices and
   trailing selection are as-of-T honest, but list membership itself must not
   be interpreted as a historically tradable signal.
+- 2026-07-10, VT-P4: `GET /api/instruments/:id/view-at` and the Instruments
+  panel expose all 53 catalog rows at a selected T. Forward rows are opt-in
+  and rendered in a separate block labeled hindsight. AAPL at 2025-06-30
+  reports raw close 205.17, `ret_1d = 205.17 / 201.08 - 1 =
+  0.020340163119...`, and `gap = 202.01 / 201.08 - 1 =
+  0.004625024866...`; 600519 exposes every context row as null with
+  `no_market_baseline`. The UI and `npm run verify:view-at` exercise both
+  markets without storing results.

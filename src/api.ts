@@ -57,6 +57,42 @@ export type MinuteBarsResponse = {
   bars: MinuteBar[]
 }
 
+export type ViewAtMetric = {
+  id: string
+  family: string
+  value: number | string | boolean | null
+  bars_available: number
+  reason: string | null
+  unit: string
+}
+
+export type ForwardReturnRow = {
+  horizon: number
+  date: string
+  ret: number | null
+  mae: number | null
+  mfe: number | null
+  delisted: boolean
+  stale: boolean
+  bars_used: number
+  reason?: string
+}
+
+export type ViewAtResponse = {
+  t: string
+  available_at: 'close'
+  metrics: ViewAtMetric[]
+  context_baselines: null | {
+    spy: string | null
+    tracking: string | null
+  }
+  forward?: {
+    hindsight: true
+    entry_basis: 'next_open' | 't_close'
+    rows: ForwardReturnRow[]
+  }
+}
+
 // Retries transient failures: the dev API takes a few seconds to open the
 // database (and tsx watch restarts it), during which the proxy returns
 // 502/ECONNREFUSED.

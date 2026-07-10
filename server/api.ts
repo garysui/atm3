@@ -19,6 +19,8 @@ import {
 } from './operations.ts'
 import { createReadPool, type ReadPool } from './read-pool.ts'
 import { abortStaleRuns } from './runs.ts'
+import { metricsAt } from './metrics-at.ts'
+import { forwardReturns, ViewAtTDateError } from './forward-returns.ts'
 
 // JSON API over facts + computed, and the owner of the database write lock:
 // UI queries run on a pool of reader connections while pipeline operations
@@ -60,6 +62,12 @@ const minuteBarsQuerySchema = z.object({
   policy: z.enum(adjustmentPolicies).default('split_dividend'),
   date: z.iso.date(),
   as_of: z.iso.date().optional(),
+})
+
+const viewAtQuerySchema = z.object({
+  t: z.iso.date(),
+  forward: z.enum(['0', '1']).default('0'),
+  entry: z.enum(['next_open', 't_close']).default('next_open'),
 })
 
 const limitQuerySchema = z.object({
@@ -284,6 +292,54 @@ export async function createApiServer(
     response.json({ policy: query.policy, asOf: query.as_of ?? null, bars: rows })
   })
 
+  app.get('/api/instruments/:id/view-at', async (request, response) => {
+    const instrumentId = instrumentIdSchema.parse(request.params.id)
+    const query = viewAtQuerySchema.parse(request.query)
+    const report = await pool.run(async (connection) => {
+      const scopeResult = await connection.runAndReadAll(
+        `select primary_market_scope as market_scope
+         from facts.instruments
+         where instrument_id = cast($instrument_id as uuid)`,
+        { instrument_id: instrumentId },
+      )
+      const scope = scopeResult.getRowObjectsJson()[0]?.market_scope
+      if (scope === undefined) return null
+
+      const backward = await metricsAt(connection, {
+        instrumentId,
+        marketScope: String(scope),
+        t: query.t,
+      })
+      const forward = query.forward === '1'
+        ? await forwardReturns(connection, {
+            instrumentId,
+            marketScope: String(scope),
+            t: query.t,
+            entryBasis: query.entry,
+            policy: 'split_dividend',
+          })
+        : null
+      return {
+        ...backward,
+        ...(forward
+          ? {
+              forward: {
+                hindsight: true,
+                entry_basis: query.entry,
+                rows: forward,
+              },
+            }
+          : {}),
+      }
+    })
+
+    if (report === null) {
+      response.status(404).json({ error: 'instrument not found' })
+      return
+    }
+    response.json(report)
+  })
+
   // Intraday coverage for one instrument: one summary row per day with
   // minute data (recent first).
   app.get('/api/instruments/:id/minute-days', async (request, response) => {
@@ -487,6 +543,15 @@ export async function createApiServer(
 
       if (error instanceof ZodError) {
         response.status(400).json({ error: z.prettifyError(error) })
+        return
+      }
+
+      if (error instanceof ViewAtTDateError) {
+        response.status(404).json({
+          error: error.message,
+          previous_date: error.previousDate,
+          next_date: error.nextDate,
+        })
         return
       }
 

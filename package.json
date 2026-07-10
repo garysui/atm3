@@ -20,6 +20,7 @@
     "verify:intraday": "tsx scripts/verify-intraday.ts",
     "verify:continuity": "tsx scripts/verify-continuity.ts",
     "verify:cn-contract": "tsx scripts/verify-cn-contract.ts",
+    "verify:view-at": "tsx scripts/verify-view-at.ts",
     "ingest:polygon:reference-tickers": "tsx scripts/ingest-polygon-reference-tickers.ts",
     "ingest:polygon:exchanges": "tsx scripts/ingest-polygon-exchanges.ts",
     "ingest:polygon:market-holidays": "tsx scripts/ingest-polygon-market-holidays.ts",
