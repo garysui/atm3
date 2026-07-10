@@ -5,6 +5,7 @@ import { buildAllFacts } from './facts-build.ts'
 import { buildMinuteParquet } from './facts-minute.ts'
 import { refreshAdjustedBarsCache } from './computed-build.ts'
 import { ingestMinuteAggs, intradayBackfillWindow } from './flatfiles.ts'
+import { continuitySummary, verifyContinuity } from './verify-continuity.ts'
 import {
   backfillWindow,
   ingestDividends,
@@ -24,7 +25,7 @@ import {
 export type OperationStep = {
   id: string
   label: string
-  stage: 'raw' | 'facts' | 'computed'
+  stage: 'raw' | 'facts' | 'computed' | 'verify'
   description: string
   run: (context: { db: Atm3Db; runId: string }) => Promise<unknown>
 }
@@ -128,6 +129,27 @@ export const dailyReplenishSteps: OperationStep[] = [
     stage: 'computed',
     description: 'snapshot of adjusted_bars(policy); skipped when watermark is fresh',
     run: ({ db }) => refreshAdjustedBarsCache(db.connection),
+  },
+  {
+    id: 'verify:continuity',
+    label: 'verify continuity',
+    stage: 'verify',
+    description:
+      'contract: every trading day covered from the fixed start; closures uncontradicted',
+    run: async ({ db }) => {
+      const { from, to } = backfillWindow()
+      const report = await verifyContinuity(db.connection, {
+        dailyFrom: from,
+        intradayFrom: intradayBackfillWindow().from,
+        to,
+      })
+
+      if (!report.ok) {
+        throw new Error(continuitySummary(report))
+      }
+
+      return { summary: continuitySummary(report) }
+    },
   },
 ]
 

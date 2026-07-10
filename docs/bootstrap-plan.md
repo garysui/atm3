@@ -183,6 +183,17 @@ for official OHLC, minute bars for intraday paths.
    from = today − 2y, to = yesterday; `ATM3_BACKFILL_FROM/TO` override.
 3. Indices: not hooked up yet; SPY is the market proxy for now. `index_aggs`
    ingestion deferred.
+4. **Coverage contract (2026-07-09): the daily window starts FIXED at
+   2024-07-01** and grows through yesterday forever — `ATM3_BACKFILL_FROM`
+   stays pinned in `.env` (the unset default is rolling and would silently
+   shrink coverage). Every trading day in the window must have raw
+   grouped-daily evidence and market-wide facts bars; zero-row files are
+   closure evidence, and a claimed closure contradicted by minute data is a
+   hard failure. Enforced by `npm run verify:continuity` and the pipeline's
+   red/green "verify continuity" card; raw holes self-heal on the next
+   replenish because ingestion rescans the whole window with presence-skip.
+   Instrument-level gaps (halts, no trades) are market facts, not data
+   holes — the contract is market-level.
 
 ## Research-phase contract (owner-confirmed, 2026-07-08)
 

@@ -350,6 +350,14 @@ erDiagram
   }
 ```
 
+Coverage contract: the daily window starts fixed at 2024-07-01
+(`ATM3_BACKFILL_FROM`, pinned) and grows through yesterday; every trading
+day must have raw grouped evidence and market-wide bars, closures are
+zero-row evidence, and `verify:continuity` (CLI + pipeline card) asserts it
+— raw holes self-heal on the next replenish. The contract is market-level:
+an individual instrument missing a day (halt, no trades) is a market fact,
+not a data hole.
+
 Bars are stored **unadjusted, as traded, under the ticker of the day**, linked
 to the instrument. `symbol_as_traded` is part of the key because one
 instrument can trade as two concurrent tape lines on the same day (e.g.

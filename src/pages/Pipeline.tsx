@@ -9,7 +9,7 @@ import { getJson } from '../api.ts'
 type OperationView = {
   id: string
   label: string
-  stage: 'raw' | 'facts' | 'computed'
+  stage: 'raw' | 'facts' | 'computed' | 'verify'
   description: string
   live?: {
     state: 'idle' | 'queued' | 'running' | 'ok' | 'failed'
@@ -30,6 +30,7 @@ const stages: Array<{ id: OperationView['stage']; title: string }> = [
   { id: 'raw', title: '1 · raw — ingest verbatim vendor files' },
   { id: 'facts', title: '2 · facts — rebuild organized facts' },
   { id: 'computed', title: '3 · computed — refresh cache' },
+  { id: 'verify', title: '4 · verify — contracts' },
 ]
 
 function elapsedSeconds(startedAt?: string): number | null {

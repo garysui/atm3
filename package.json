@@ -17,6 +17,7 @@
     "computed:cache": "tsx scripts/refresh-computed-cache.ts",
     "verify:adjustments": "tsx scripts/verify-adjustments.ts",
     "verify:intraday": "tsx scripts/verify-intraday.ts",
+    "verify:continuity": "tsx scripts/verify-continuity.ts",
     "ingest:polygon:reference-tickers": "tsx scripts/ingest-polygon-reference-tickers.ts",
     "ingest:polygon:exchanges": "tsx scripts/ingest-polygon-exchanges.ts",
     "ingest:polygon:market-holidays": "tsx scripts/ingest-polygon-market-holidays.ts",
