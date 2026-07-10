@@ -17,6 +17,52 @@ function loadMermaid(): Promise<typeof import('mermaid').default> {
   return mermaidLoader
 }
 
+// KaTeX follows the same on-demand pattern: loaded (with its stylesheet)
+// only when a doc contains a ```math block, e.g. the glossary's formulas.
+let katexLoader: Promise<typeof import('katex').default> | null = null
+
+function loadKatex(): Promise<typeof import('katex').default> {
+  katexLoader ??= Promise.all([
+    import('katex'),
+    import('katex/dist/katex.min.css'),
+  ]).then(([module]) => module.default)
+
+  return katexLoader
+}
+
+// marked leaves ```math blocks as <pre><code class="language-math">; render
+// each into display math in place. A formula that fails to parse keeps its
+// source with the error shown, never a blank hole.
+async function renderMathBlocks(container: HTMLElement): Promise<void> {
+  const blocks = [...container.querySelectorAll('code.language-math')]
+
+  if (blocks.length === 0) {
+    return
+  }
+
+  const katex = await loadKatex()
+
+  for (const block of blocks) {
+    const source = (block.textContent ?? '').trim()
+    const host = block.closest('pre') ?? block
+
+    try {
+      const figure = document.createElement('div')
+      figure.className = 'math'
+      figure.innerHTML = katex.renderToString(source, {
+        displayMode: true,
+        throwOnError: true,
+      })
+      host.replaceWith(figure)
+    } catch (cause) {
+      const note = document.createElement('p')
+      note.className = 'error'
+      note.textContent = `formula failed to render: ${(cause as Error).message}`
+      host.before(note)
+    }
+  }
+}
+
 // In-doc relative markdown links must stay inside the SPA: `tech-stack.md`
 // becomes `#docs/tech-stack` (a path navigation would leave the app and 404
 // on refresh). External links open in a new tab.
@@ -269,6 +315,7 @@ export function Docs({ docName }: { docName: string | null }) {
       const container = document.createElement('div')
       container.innerHTML = marked.parse(doc.markdown) as string
       rewriteDocLinks(container)
+      await renderMathBlocks(container)
       await renderMermaidBlocks(container, () => cancelled)
 
       if (!cancelled) {

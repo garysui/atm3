@@ -181,6 +181,14 @@ form {
   height: auto;
 }
 
+/* KaTeX display formulas in docs (```math blocks): centered like the
+   library default, scrolling sideways instead of widening the page. */
+.doc .math {
+  margin: 10px 0 16px;
+  padding: 4px 0;
+  overflow-x: auto;
+}
+
 /* Pipeline page: stages left-to-right, one card per operation. */
 .pipeline {
   display: flex;

@@ -93,6 +93,9 @@ same shape discipline as `adjustedReturnSeries`.
 
 ### Notation
 
+Every term and formula here is also collected, with meanings, in the
+project [glossary](glossary.md).
+
 Bars are the instrument's own bar series ≤ T, indexed backward (`x_0` = T's
 bar, `x_1` = previous). `ac/ao/ah/al` adjusted close/open/high/low;
 `c/o/h/l/v` raw; `dv_i = c_i × v_i`; `r_i = ac_i/ac_{i+1} − 1` (daily
