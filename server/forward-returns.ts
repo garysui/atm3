@@ -98,14 +98,23 @@ export async function forwardReturns(
         from facts.exchanges
         where market_scope = $market_scope
       ),
+      frontier as (
+        -- Horizon dates are enumerable only up to the scope's data
+        -- frontier: future calendar rows exist just for known special days
+        -- (half days), so counting "open days" past the frontier would leap
+        -- across unmaterialized dates.
+        select max(market_date) as last_date
+        from facts.bars_daily where market_scope = $market_scope
+      ),
       ranked_dates as (
         select
           market_date,
           row_number() over (order by market_date) as horizon
-        from facts.trading_days, calendar
+        from facts.trading_days, calendar, frontier
         where facts.trading_days.calendar_id = calendar.calendar_id
           and is_open
           and market_date > cast($t as date)
+          and market_date <= frontier.last_date
       ),
       targets as (
         select r.market_date, r.horizon
@@ -180,14 +189,23 @@ export async function forwardReturns(
         select min(calendar_id) as calendar_id
         from facts.exchanges where market_scope = $market_scope
       ),
+      frontier as (
+        -- Horizon dates are enumerable only up to the scope's data
+        -- frontier: future calendar rows exist just for known special days
+        -- (half days), so counting "open days" past the frontier would leap
+        -- across unmaterialized dates.
+        select max(market_date) as last_date
+        from facts.bars_daily where market_scope = $market_scope
+      ),
       ranked_dates as (
         select
           market_date,
           row_number() over (order by market_date) as horizon
-        from facts.trading_days, calendar
+        from facts.trading_days, calendar, frontier
         where facts.trading_days.calendar_id = calendar.calendar_id
           and is_open
           and market_date > cast($t as date)
+          and market_date <= frontier.last_date
       ),
       targets as (
         select r.market_date, r.horizon

@@ -333,7 +333,6 @@ export async function metricsAt(
         a.ac0 / nullif(a.ac126, 0) - 1 as ret_126d,
         a.ac0 / nullif(a.ac252, 0) - 1 as ret_252d,
         a.ac21 / nullif(a.ac252, 0) - 1 as mom_12_1,
-        a.c0 / nullif(a.o0, 0) - 1 as ret_intraday,
         a.ao0 / nullif(a.ac1, 0) - 1 as gap,
         a.gap_freq_63d,
         a.abs_gap_med_63d,

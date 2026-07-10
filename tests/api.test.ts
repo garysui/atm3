@@ -298,7 +298,7 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
     assert.equal(minuteView.forward.hindsight, true)
     assert.deepEqual(
       minuteView.forward.rows.map(({ horizon }) => horizon),
-      ['to_close', 'next_open', '1d', '5d'],
+      ['to_close', 'next_open', '1d', '3d'],
     )
 
     // Cross-sectional ranking: valid shape on a real bar date (windows are

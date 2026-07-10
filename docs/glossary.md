@@ -340,8 +340,6 @@ All on the adjusted basis, dimensionless.
 \mathit{mom\_12\_1} = \frac{ac_{21}}{ac_{252}} - 1
 ```
 
-- **`ret_intraday`** — T's open-to-close move, raw (same bar, factors
-  irrelevant): `c_0 / o_0 − 1`. The day's directional body.
 
 ## Daily metrics — gap
 
@@ -650,9 +648,10 @@ as-of-D adjusted prices coincide, so cross-day ratios are exact.
   mild lookahead), `t_close`, or for intraday the **next minute open** (the
   first RTH bar at/after minute T).
 - **horizon** — daily: open days of the scope calendar after T
-  ({1, 5, 21, 63, 126, 252}); intraday: `to_close`, `next_open`, `1d`,
-  `5d`. Calendar-based, so suspensions stretch time instead of compressing
-  it.
+  ({1, 5, 21, 63, 126, 252}); intraday, the four holding conventions:
+  `to_close` (hold to today's close), `next_open` (hold to the next
+  tradable open), `1d` (next day's close), `3d` (third open day's close).
+  Calendar-based, so suspensions stretch time instead of compressing it.
 - **forward return** — the anchor-invariant ratio of adjusted prices
   (total-return convention: splits scale shares, dividends reinvest at
   ex):
@@ -680,10 +679,13 @@ as-of-D adjusted prices coincide, so cross-day ratios are exact.
   would brand an active name delisted whenever a horizon outruns the
   newest data. This is where survivorship bias would silently enter.
 - **`stale`** (forward flag) — the valuation is carried from an earlier
-  bar for any other reason: a suspension, or the horizon lies beyond the
-  last known bar of a live instrument.
+  bar within the known data: a suspension, or the instrument's own tape
+  stopping before a horizon that other names in the scope still cover.
 - **`beyond_calendar`** (forward reason) — the horizon date is past the
-  known trading calendar; the row exists with null date/return rather than
+  known trading calendar or the scope's **data frontier** (the last date
+  with any bar): future calendar rows exist only for known special days, so
+  open-day counting stops at the frontier rather than leaping across
+  unmaterialized dates. The row exists with null date/return rather than
   failing the request or being dropped.
 - **`no_entry_bar`** (forward reason) — no entry bar exists by the horizon
   (T was the last bar under `next_open`, or the horizon precedes a delayed

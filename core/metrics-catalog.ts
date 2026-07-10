@@ -41,7 +41,6 @@ export const metricsCatalog = [
   { id: 'ret_126d', family: 'returns', window: 126, min_bars: 127, available_at: close, basis: 'adj', unit: 'ratio', description: 'One-hundred-twenty-six-bar adjusted return.' },
   { id: 'ret_252d', family: 'returns', window: 252, min_bars: 253, available_at: close, basis: 'adj', unit: 'ratio', description: 'Two-hundred-fifty-two-bar adjusted return.' },
   { id: 'mom_12_1', family: 'returns', window: 252, min_bars: 253, available_at: close, basis: 'adj', unit: 'ratio', description: 'Twelve-to-one-month adjusted momentum.' },
-  { id: 'ret_intraday', family: 'returns', window: 1, min_bars: 1, available_at: close, basis: 'raw', unit: 'ratio', description: 'T close versus T open.' },
 
   { id: 'gap', family: 'gap', window: 1, min_bars: 2, available_at: 'open', basis: 'adj', unit: 'ratio', description: 'Adjusted overnight opening gap.' },
   { id: 'gap_freq_63d', family: 'gap', window: 63, min_bars: 64, available_at: close, basis: 'adj', unit: 'share', description: 'Share of 63 gaps whose absolute value exceeds two percent.' },

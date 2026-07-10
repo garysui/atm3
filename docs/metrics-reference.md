@@ -3,7 +3,7 @@
 <!-- GENERATED FILE — DO NOT EDIT. Source: core/metrics-catalog.ts. -->
 <!-- Regenerate with `npm run docs:metrics`; a sync test fails when stale. -->
 
-Every metric the view-at-T engine computes: **62 daily** metrics across 9 families plus **17 session** (intraday) metrics — 79 total. This page is generated from the catalog (`core/metrics-catalog.ts`), so it is always complete and current by construction. Exact formulas, the theory behind the estimators, and every term used below live in the [glossary](glossary.md).
+Every metric the view-at-T engine computes: **61 daily** metrics across 9 families plus **17 session** (intraday) metrics — 78 total. This page is generated from the catalog (`core/metrics-catalog.ts`), so it is always complete and current by construction. Exact formulas, the theory behind the estimators, and every term used below live in the [glossary](glossary.md).
 
 How to read the columns: **measures** — what the number tells you; **window** — the lookback in bars (daily) or minute bars (session); **needs** — minimum bars before the metric reports a value instead of an honest null; **basis** — `adj` (split-dividend adjusted as of T), `raw` (as-traded), `dollar` (raw close × raw volume, split-invariant); **at** — earliest availability (`open`, `close`, or intraday `minute`).
 
@@ -18,7 +18,7 @@ Levels and status for filter predicates — real as-traded prices, listing state
 | `listed_bars` | Instrument bars observed through T. | all | 1 | raw | bars | close |
 | `active_at_t` | A symbol validity window contains T. | — | 1 | raw | boolean | close |
 
-## returns (8)
+## returns (7)
 
 How much the price moved over standard bar windows (adjusted basis; 21 ≈ month, 63 ≈ quarter, 252 ≈ year).
 
@@ -31,7 +31,6 @@ How much the price moved over standard bar windows (adjusted basis; 21 ≈ month
 | `ret_126d` | One-hundred-twenty-six-bar adjusted return. | 126 | 127 | adj | ratio | close |
 | `ret_252d` | Two-hundred-fifty-two-bar adjusted return. | 252 | 253 | adj | ratio | close |
 | `mom_12_1` | Twelve-to-one-month adjusted momentum. | 252 | 253 | adj | ratio | close |
-| `ret_intraday` | T close versus T open. | 1 | 1 | raw | ratio | close |
 
 ## gap (3)
 

@@ -8,7 +8,7 @@ import { openDatabase, type Atm3Db } from '../server/db.ts'
 import { buildMinuteParquet } from '../server/facts-minute.ts'
 import { forwardReturnsFromMinute } from '../server/forward-returns-minute.ts'
 import { landRawFile } from '../server/raw-zone.ts'
-import { A, seedFacts } from './fixtures.ts'
+import { A, B, seedFacts } from './fixtures.ts'
 
 // Forward from an intraday entry. seedFacts: A closes 100 on 2025-01-02 and
 // 51 on 2025-01-03 across a 2-for-1 split ex 2025-01-03 — the next_open
@@ -67,8 +67,9 @@ test('minute-entry forward returns: split crossing, paths, edges', async () => {
 
   try {
     await seedFacts(db)
-    // Calendar: four open days after 2025-01-02 — the 1d target resolves,
-    // the 5d target is beyond the known calendar.
+    // Calendar through 01-08; the scope's data frontier is 01-07 (a bar for
+    // instrument B), so the 3d target (01-07) resolves while A's own tape
+    // ends 01-06 — the stale-carried case.
     await db.connection.run(`
       insert into facts.exchanges (
         exchange_mic, name, market_scope, calendar_id, timezone, currency
@@ -77,7 +78,13 @@ test('minute-entry forward returns: split crossing, paths, edges', async () => {
       insert into facts.trading_days (calendar_id, market_date, is_open, source_id)
       select 'us_equities', d, true, 'fixture'
       from unnest([date '2025-01-02', date '2025-01-03', date '2025-01-06',
-                   date '2025-01-07', date '2025-01-08']) dates(d)
+                   date '2025-01-07', date '2025-01-08']) dates(d);
+      insert into facts.bars_daily (
+        source_id, instrument_id, market_date, market_scope, symbol_as_traded,
+        open, high, low, close, volume
+      ) values
+        ('polygon', cast('${B}' as uuid), date '2025-01-07',
+         'us_stocks', 'BBBW', 12, 12, 12, 12, 900)
     `)
 
     await landMinuteDay(db, dir, '2025-01-02', [
@@ -98,9 +105,9 @@ test('minute-entry forward returns: split crossing, paths, edges', async () => {
     })
     assert.deepEqual(
       rows.map((row) => row.horizon),
-      ['to_close', 'next_open', '1d', '5d'],
+      ['to_close', 'next_open', '1d', '3d'],
     )
-    const [toClose, nextOpen, d1, d5] = rows
+    const [toClose, nextOpen, d1, d3] = rows
 
     // Entry = adjusted 09:31 open = 100 * 0.5 = 50 under the 01-03 anchor —
     // identical to raw arithmetic, proving anchor invariance in practice.
@@ -126,8 +133,17 @@ test('minute-entry forward returns: split crossing, paths, edges', async () => {
     assert.equal(d1.stale, false)
     assert.equal(d1.delisted, false)
 
-    assert.equal(d5.reason, 'beyond_calendar')
-    assert.equal(d5.date, null)
+    // 3d: target 01-07; the tape ends 01-06, so the valuation carries from
+    // that close (stale, not delisted). The anchor is now 01-07, which pulls
+    // the 01-06 dividend (factor 50/51) into every pre-ex price — ratios
+    // stay anchor-invariant, so entry arithmetic below shows the factors.
+    assert.equal(d3.date, '2025-01-07')
+    closeTo(d3.ret, 52 / (100 * 0.5 * (50 / 51)) - 1)
+    assert.equal(d3.stale, true)
+    assert.equal(d3.delisted, false)
+    closeTo(d3.mae, 99.8 / 100 - 1) // adjusted minute low; factors cancel
+    closeTo(d3.mfe, 52 / (100 * 0.5 * (50 / 51)) - 1) // 01-06 flat bar peak
+    assert.equal(d3.bars_used, 4) // 2 minute bars + 01-03 + 01-06
 
     // T after the session's last bar start: no entry exists.
     const noEntry = await forwardReturnsFromMinute(db.connection, {

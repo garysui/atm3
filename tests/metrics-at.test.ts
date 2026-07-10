@@ -66,11 +66,11 @@ function closeTo(actual: unknown, expected: number): void {
 }
 
 test('catalog declares every explicitly listed metric exactly once', () => {
-  // The plan tables contain 40 non-context + 13 context ids = 53; the VT-P6
-  // surprise layer adds 7 surprise/volatility ids + 2 residual-z context
-  // ids = 62. No named metric is silently cut.
-  assert.equal(metricsCatalog.length, 62)
-  assert.equal(new Set(metricsCatalog.map(({ id }) => id)).size, 62)
+  // The plan tables contain 40 non-context + 13 context ids = 53; VT-P6
+  // added 9; the owner removed ret_intraday (same-bar open-to-close,
+  // 2026-07-10) = 61. Changes are deliberate, never silent.
+  assert.equal(metricsCatalog.length, 61)
+  assert.equal(new Set(metricsCatalog.map(({ id }) => id)).size, 61)
   for (const metric of metricsCatalog) {
     assert.ok(metric.id)
     assert.ok(metric.family)
@@ -211,7 +211,6 @@ test('all non-context formulas match visible independent arithmetic', async () =
       ret_126d: x[0].ac / x[126].ac - 1,
       ret_252d: x[0].ac / x[252].ac - 1,
       mom_12_1: x[21].ac / x[252].ac - 1,
-      ret_intraday: x[0].close / x[0].open - 1,
       gap: x[0].ao / x[1].ac - 1,
       gap_freq_63d: gaps63.filter((value) => Math.abs(value) > 0.02).length / 63,
       abs_gap_med_63d: median(gaps63.map(Math.abs)),
@@ -292,7 +291,7 @@ test('all non-context formulas match visible independent arithmetic', async () =
           (3 * (n - 1) ** 2) / ((n - 2) * (n - 3))
       })(),
     }
-    assert.equal(Object.keys(expected).length, 47)
+    assert.equal(Object.keys(expected).length, 46)
 
     const report = await metricsAt(db.connection, {
       instrumentId: US,

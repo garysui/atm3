@@ -369,6 +369,25 @@ so v1 makes the model explicit and small rather than pretending neutrality:
 
 ## Implementation notes
 
+- 2026-07-10, owner catalog decisions: `ret_intraday` (same-bar
+  open-to-close) REMOVED as meaningless — a bar is a cumulative conclusion,
+  and the gap + close-to-close pair already carries the day; catalog is 61
+  daily ids. Intraday forward horizons are the owner's four holding
+  conventions: `to_close`, `next_open`, `1d` (next day close), `3d` (third
+  day close) — `3d` replaces `5d`. Implementing `3d` surfaced and fixed a
+  factor-consistency bug: the minute macro's series-anchor rule stops at
+  the minute tape's last bar, so an event between D and the horizon that
+  postdates the minute tape adjusted the daily valuation but not the
+  minute entry. Minute entries/paths now use RAW minute prices scaled by
+  day D's DAILY cumulative factor under the shared anchor — consistent by
+  construction, regression-tested. Second fix from the same live check:
+  horizon targets are now bounded by the scope's DATA FRONTIER (max bar
+  date) — future calendar rows exist only for known special days (half
+  days), so the old "n-th open day" could leap months across
+  unmaterialized dates (3d from 2026-07-08 resolved to 2026-12-24, a half
+  day). Past the frontier is beyond_calendar; stale is reserved for
+  in-frontier tape gaps.
+
 - 2026-07-10, VT-P6 (owner-implemented) — the surprise layer: 9 catalog
   additions per the approved analysis. `yz_vol_21d` (Yang–Zhang: overnight
   + open-close + Rogers–Satchell with k = 0.34/(1.34 + 22/20)) joins the

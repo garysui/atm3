@@ -148,18 +148,17 @@ test('forward returns are anchor-invariant and hand-check both entry bases', asy
     assert.equal(ended[0].stale, false)
     closeTo(ended[0].ret, -0.1)
 
-    // A horizon past the last KNOWN bar of a live instrument is a stale
-    // carried valuation — the future has not happened; nothing is delisted.
+    // Horizon targets are enumerable only up to the scope's DATA FRONTIER
+    // (future calendar rows exist just for known special days): past it the
+    // row is beyond_calendar, never a leap across unmaterialized dates.
     const beyondData = await forwardReturns(db.connection, {
       instrumentId: US, marketScope: 'us_stocks', t: '2025-01-09',
       horizons: [1, 2], entryBasis: 't_close', policy: 'split_dividend',
     })
     assert.equal(beyondData[0].date, '2025-01-10')
     assert.equal(beyondData[0].stale, false)
-    assert.equal(beyondData[1].date, '2025-01-13') // covered by the calendar
-    assert.equal(beyondData[1].stale, true) // valuation carried from 01-10
-    assert.equal(beyondData[1].delisted, false)
-    closeTo(beyondData[1].ret, 28 / 27 - 1)
+    assert.equal(beyondData[1].date, null) // 01-13 is past the frontier
+    assert.equal(beyondData[1].reason, 'beyond_calendar')
 
     // Horizons past the known calendar are per-row results, not a wholesale
     // failure: near horizons still resolve at a recent T.
