@@ -13,6 +13,9 @@ const envSchema = z.object({
   // Intraday flat files can use a shorter window than the daily backfill
   // (they are ~30 MB/day); defaults to ATM3_BACKFILL_FROM when unset.
   ATM3_INTRADAY_BACKFILL_FROM: z.string().optional(),
+  ATM3_CN_SOURCE: z.enum(['baostock']).optional(),
+  ATM3_CN_BACKFILL_FROM: z.string().optional(),
+  ATM3_CN_PYTHON: z.string().optional(),
   POLYGON_API_KEY: z.string().optional(),
   // Polygon/Massive flat files use S3-compatible credentials (an AWS CLI
   // profile), NOT the REST key.

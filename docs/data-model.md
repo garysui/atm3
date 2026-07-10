@@ -124,7 +124,7 @@ erDiagram
   raw_sources ||--o{ raw_fetches : "from vendor"
 
   raw_sources {
-    varchar source_id PK "polygon | sec | benzinga | cboe | tushare"
+    varchar source_id PK "polygon | baostock | sec | benzinga | cboe"
     varchar display_name
     varchar base_url
   }
@@ -499,3 +499,24 @@ surfaced as a data-quality signal, not silently merged.
 | `grouped_daily_adjusted` | same, `adjusted=true` | parity checks only |
 | `index_aggs` | `/v2/aggs/ticker/I:*/range/1/day/...` | deferred — SPY is the market proxy for now |
 | `earnings` | Benzinga via Polygon (later) | instrument_events |
+
+## BaoStock CN prototype dataset map
+
+BaoStock is an anonymous, no-SLA prototype source. A pinned Python relay is
+acquisition-only and emits decompressed application protocol frames; TypeScript
+lands each frame byte-for-byte with a `.frame` extension and manifest. The
+42-code universe is intentionally selected to exercise market structure and is
+not a statistically representative research universe.
+
+| raw dataset | BaoStock call | planned facts use |
+|---|---|---|
+| `trade_cal` | `query_trade_dates` | `cn_equities` trading days |
+| `universe` | `query_all_stock` | listing/name snapshot evidence |
+| `stock_basic` | `query_stock_basic` | instruments, symbols, identifiers |
+| `daily_k` | `query_history_k_data_plus`, `adjustflag=3` | unadjusted daily bars |
+| `dividend` | `query_dividend_data`, `yearType=operate` | cash and stock distributions |
+| `adj_factor` | `query_adjust_factor` | diagnostic comparison only |
+
+Both XSHG and XSHE point to the shared `cn_equities` calendar. The source
+calendar is canonical only after the facts builder checks it against observed
+universe/trading-status evidence; disagreement is quarantined.

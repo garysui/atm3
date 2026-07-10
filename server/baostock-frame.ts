@@ -69,7 +69,10 @@ export function parseBaoStockFrame(bytes: Uint8Array): BaoStockFrame {
     throw new Error(`Unsupported BaoStock response method: ${method || '(blank)'}`)
   }
 
-  const payload = recordsSchema.parse(JSON.parse(body[6] ?? '{}'))
+  const recordText = body[6] ?? ''
+  const payload = recordText.trim()
+    ? recordsSchema.parse(JSON.parse(recordText))
+    : { record: [] }
   const fields = (body[fieldIndex] ?? '')
     .split(',')
     .map((field) => field.trim())

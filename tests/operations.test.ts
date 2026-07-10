@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { setTimeout as sleep } from 'node:timers/promises'
 import test from 'node:test'
-import { createOperationsController, type OperationStep } from '../server/operations.ts'
+import {
+  createOperationsController,
+  skipOperation,
+  type OperationStep,
+} from '../server/operations.ts'
 import { withTempDatabase } from './helpers.ts'
 
 // Stub steps — the queue/state machinery is under test, not the jobs.
@@ -171,5 +175,29 @@ test('run-all fails fast: a failed step skips the rest of its chain', async () =
     await waitForIdle(controller)
     assert.equal(controller.status()['op:downstream-a']?.state, 'ok')
     assert.deepEqual(log, ['downstream-a'])
+  })
+})
+
+test('operation can report an intentional skip with a reason', async () => {
+  await withTempDatabase(async (db) => {
+    const controller = createOperationsController(db, [
+      {
+        id: 'op:disabled',
+        label: 'disabled',
+        stage: 'raw',
+        description: 'disabled by configuration',
+        run: async () => skipOperation('source not enabled'),
+      },
+    ])
+
+    controller.enqueue('op:disabled')
+    await waitForIdle(controller)
+    assert.deepEqual(controller.status()['op:disabled'], {
+      state: 'skipped',
+      startedAt: controller.status()['op:disabled']?.startedAt,
+      finishedAt: controller.status()['op:disabled']?.finishedAt,
+      result: { skipped: true, reason: 'source not enabled' },
+      error: 'skipped: source not enabled',
+    })
   })
 })

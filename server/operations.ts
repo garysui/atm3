@@ -2,6 +2,15 @@ import type { Atm3Db } from './db.ts'
 import { logger } from './log.ts'
 import { withRun } from './runs.ts'
 import { buildAllFacts } from './facts-build.ts'
+import {
+  cnSourceEnabled,
+  ingestBaoStockAdjustmentFactors,
+  ingestBaoStockBasics,
+  ingestBaoStockCalendar,
+  ingestBaoStockDaily,
+  ingestBaoStockDividends,
+  ingestBaoStockUniverse,
+} from './baostock-ingest.ts'
 import { buildMinuteParquet } from './facts-minute.ts'
 import { refreshAdjustedBarsCache } from './computed-build.ts'
 import { ingestMinuteAggs, intradayBackfillWindow } from './flatfiles.ts'
@@ -36,6 +45,30 @@ export type OperationState = {
   finishedAt?: string
   result?: unknown
   error?: string
+}
+
+export type OperationSkipped = { skipped: true; reason: string }
+
+export function skipOperation(reason: string): OperationSkipped {
+  return { skipped: true, reason }
+}
+
+function isOperationSkipped(value: unknown): value is OperationSkipped {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { skipped?: unknown }).skipped === true &&
+    typeof (value as { reason?: unknown }).reason === 'string'
+  )
+}
+
+function cnOperation(
+  run: OperationStep['run'],
+): OperationStep['run'] {
+  return (context) =>
+    cnSourceEnabled()
+      ? run(context)
+      : Promise.resolve(skipOperation('CN source not enabled'))
 }
 
 export const dailyReplenishSteps: OperationStep[] = [
@@ -107,6 +140,50 @@ export const dailyReplenishSteps: OperationStep[] = [
       const { from, to } = intradayBackfillWindow()
       return ingestMinuteAggs(db, { runId, from, to })
     },
+  },
+  {
+    id: 'ingest:baostock:trade_cal',
+    label: 'CN calendar',
+    stage: 'raw',
+    description: 'BaoStock cn_equities calendar snapshot',
+    run: cnOperation(({ db, runId }) => ingestBaoStockCalendar(db, { runId })),
+  },
+  {
+    id: 'ingest:baostock:universe',
+    label: 'CN universe',
+    stage: 'raw',
+    description: 'BaoStock listed-security snapshot for identity evidence',
+    run: cnOperation(({ db, runId }) => ingestBaoStockUniverse(db, { runId })),
+  },
+  {
+    id: 'ingest:baostock:stock_basic',
+    label: 'CN instrument basics',
+    stage: 'raw',
+    description: 'metadata for the owner-vetoable prototype code list',
+    run: cnOperation(({ db, runId }) => ingestBaoStockBasics(db, { runId })),
+  },
+  {
+    id: 'ingest:baostock:daily_k',
+    label: 'CN daily bars',
+    stage: 'raw',
+    description: 'unadjusted per-code daily windows for the prototype',
+    run: cnOperation(({ db, runId }) => ingestBaoStockDaily(db, { runId })),
+  },
+  {
+    id: 'ingest:baostock:dividend',
+    label: 'CN distributions',
+    stage: 'raw',
+    description: 'per-code implemented cash and stock distributions',
+    run: cnOperation(({ db, runId }) => ingestBaoStockDividends(db, { runId })),
+  },
+  {
+    id: 'ingest:baostock:adj_factor',
+    label: 'CN vendor factors',
+    stage: 'raw',
+    description: 'BaoStock price-change factors for diagnostics only',
+    run: cnOperation(({ db, runId }) =>
+      ingestBaoStockAdjustmentFactors(db, { runId }),
+    ),
   },
   {
     id: 'build:facts',
@@ -224,6 +301,16 @@ export function createOperationsController(
           const result = await withRun(db.connection, item.id, null, (runId) =>
             step.run({ db, runId }),
           )
+          if (isOperationSkipped(result)) {
+            states.set(item.id, {
+              state: 'skipped',
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              result,
+              error: `skipped: ${result.reason}`,
+            })
+            continue
+          }
           states.set(item.id, {
             state: 'ok',
             startedAt,

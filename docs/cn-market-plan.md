@@ -324,3 +324,6 @@ when: the structural acceptance contract below passes end to end.
   a decompressed body, so only non-compressed frames can enforce header/body
   character-length equality. Fixtures cover all six prototype calls; calendar
   and unadjusted history were hash-stable on identical re-capture.
+- 2026-07-10, CN-P1: successful calls with no rows may encode body field 6
+  as an empty string rather than `{\"record\":[]}`. The TypeScript parser
+  matches the SDK's `setData` behavior and treats both forms as zero records.

@@ -75,3 +75,25 @@ test('BaoStock frame parser rejects truncated body data', async () => {
   )
   assert.throws(() => parseBaoStockFrame(invalidLength), /body length/)
 })
+
+test('BaoStock successful empty data field means zero records', () => {
+  const separator = '\u0001'
+  const body = [
+    '0',
+    'success',
+    'query_dividend_data',
+    'anonymous',
+    '1',
+    '500',
+    '',
+    'sh.600900',
+    '2025',
+    'operate',
+    'code,dividOperateDate',
+  ].join(separator)
+  const header = `00.9.00${separator}14${separator}${String(body.length).padStart(10, '0')}`
+  const frame = new TextEncoder().encode(
+    `${header}${body}${separator}1234567890<![CDATA[]]>\n`,
+  )
+  assert.deepEqual(parseBaoStockFrame(frame).records, [])
+})

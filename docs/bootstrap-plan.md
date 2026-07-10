@@ -167,13 +167,31 @@ test covers raw→parquet→identity→adjusted→quarantine→rebuild; and
 two-tapes doctrine (data-model, phenomena §13): daily bars are authoritative
 for official OHLC, minute bars for intraday paths.
 
-## Next — CN stock market
+## CN structural prototype
 
-Planned in full: [cn-market-plan.md](cn-market-plan.md) (2026-07-10,
-written for hand-off). Four phases: Tushare raw ingestion → CN facts
-builders into the same tables → factor view extended with the CN ex-right
-formula + adj_factor parity → pipeline/contract/UI. Open owner decisions
-listed at the end of that doc.
+Plan: [cn-market-plan.md](cn-market-plan.md), revised to use anonymous
+BaoStock acquisition and a deliberately selected 42-code structural sample.
+
+### CN-P0 — relay and raw-capture spike
+
+Status: done 2026-07-10. BaoStock 0.9.2 protocol `00.9.20` is pinned in a
+project-local Python environment. The stateless relay captures application
+frames before SDK row parsing; TypeScript pins the SOH/JSON/CRC grammar.
+Seventeen committed offline frames cover six calls and 5,686 rows. Calendar
+and unadjusted-history hashes matched on identical live re-capture; the full
+gate passed with 27 tests.
+
+### CN-P1 — prototype raw ingestion
+
+Status: done 2026-07-10. Six gated pipeline operations landed calendar,
+universe, basics, unadjusted daily bars, distributions, and diagnostic vendor
+factors. Current evidence: 42 basic rows, 19,749 daily rows, 149 distribution
+rows, 120 factor rows, 914 calendar rows, and 7,302 universe rows across 269
+verbatim frames. A second complete pass fetched zero frames. Rebuilding
+`raw.fetches` from 2,228 manifests reproduced every BaoStock dataset count.
+The 42-code list remains prominently owner-vetoable before expansion.
+
+Next: CN-P2 facts builders into the existing shared tables.
 
 ## Later (explicitly out of scope now)
 
