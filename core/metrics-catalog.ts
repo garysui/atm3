@@ -7,11 +7,12 @@ export const metricFamilies = [
   'volume',
   'events',
   'context',
+  'session',
 ] as const
 
 export type MetricFamily = (typeof metricFamilies)[number]
 export type MetricBasis = 'adj' | 'raw' | 'dollar'
-export type MetricAvailableAt = 'open' | 'close'
+export type MetricAvailableAt = 'open' | 'close' | 'minute'
 
 export type MetricCatalogEntry = {
   id: string
@@ -90,3 +91,33 @@ export const metricsCatalog = [
 ] as const satisfies readonly MetricCatalogEntry[]
 
 export type MetricId = (typeof metricsCatalog)[number]['id']
+
+// Session metrics at an intraday minute T (VT-P5). Bars are the session's
+// RTH minute bars STRICTLY before T (the in-progress minute is invisible);
+// min_bars counts those visible bars. window is in minute bars. Within one
+// session raw and as-of-D adjusted prices coincide (an ex-date event on D
+// adjusts earlier days, not D itself), so `raw` here is also exact for
+// cross-day ratios whose other leg is the adjusted previous daily close.
+const minute = 'minute' as const
+
+export const sessionMetricsCatalog = [
+  { id: 'last_price', family: 'session', window: 1, min_bars: 1, available_at: minute, basis: 'raw', unit: 'currency', description: 'Close of the last complete RTH minute before T.' },
+  { id: 'cum_dollar_volume', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'dollar', unit: 'currency', description: 'Cumulative RTH dollar volume before T.' },
+  { id: 'minutes_since_open', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'bars', description: 'Complete RTH minute bars observed before T.' },
+  { id: 'session_fraction', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'share', description: 'Observed bars over the 390-minute regular session, capped at 1.' },
+  { id: 'gap_at_open', family: 'session', window: 1, min_bars: 1, available_at: minute, basis: 'adj', unit: 'ratio', description: 'First RTH minute open versus the adjusted previous daily close.' },
+  { id: 'session_ret', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price versus the first RTH minute open.' },
+  { id: 'ret_from_prev_close', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'adj', unit: 'ratio', description: 'Last price versus the adjusted previous daily close.' },
+  { id: 'vwap_dist', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price versus the session typical-price VWAP so far.' },
+  { id: 'session_range_pos', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price position inside the session high-low range so far.' },
+  { id: 'session_high_dist', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price versus the session high so far.' },
+  { id: 'session_low_dist', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price versus the session low so far.' },
+  { id: 'range_pct_so_far', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'adj', unit: 'ratio', description: 'Session high-low range so far over the adjusted previous daily close.' },
+  { id: 'ret_30m', family: 'session', window: 30, min_bars: 31, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price versus the close 30 visible bars earlier.' },
+  { id: 'ret_60m', family: 'session', window: 60, min_bars: 61, available_at: minute, basis: 'raw', unit: 'ratio', description: 'Last price versus the close 60 visible bars earlier.' },
+  { id: 'session_vol', family: 'session', window: 'all', min_bars: 22, available_at: minute, basis: 'raw', unit: 'annualized', description: 'Annualized sample volatility of visible minute log returns.' },
+  { id: 'up_minutes_share', family: 'session', window: 'all', min_bars: 22, available_at: minute, basis: 'raw', unit: 'share', description: 'Share of visible minute closes above the prior minute close.' },
+  { id: 'rvol_pace', family: 'session', window: 'all', min_bars: 1, available_at: minute, basis: 'dollar', unit: 'ratio', description: 'Cumulative dollar volume versus the same-cutoff average of up to 20 prior sessions (needs at least 5).' },
+] as const satisfies readonly MetricCatalogEntry[]
+
+export type SessionMetricId = (typeof sessionMetricsCatalog)[number]['id']

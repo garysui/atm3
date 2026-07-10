@@ -68,7 +68,7 @@ export type ViewAtMetric = {
 
 export type ForwardReturnRow = {
   horizon: number
-  date: string
+  date: string | null
   ret: number | null
   mae: number | null
   mfe: number | null
@@ -90,6 +90,22 @@ export type ViewAtResponse = {
     hindsight: true
     entry_basis: 'next_open' | 't_close'
     rows: ForwardReturnRow[]
+  }
+}
+
+export type ViewAtMinuteResponse = {
+  t: { date: string; minute: string }
+  available_at: 'minute'
+  visible_bars: number
+  prior_sessions: number
+  prev_close_date: string | null
+  metrics: ViewAtResponse['metrics']
+  // The full daily view as of the previous close — knowable at any minute T.
+  daily: ViewAtResponse | null
+  forward?: {
+    hindsight: true
+    entry_basis: string
+    rows: Array<Omit<ForwardReturnRow, 'horizon'> & { horizon: string }>
   }
 }
 

@@ -5,9 +5,15 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createApiServer } from '../server/api.ts'
+import { gzipSync } from 'node:zlib'
 import { openDatabase, SCHEMA_VERSION } from '../server/db.ts'
+import { buildMinuteParquet } from '../server/facts-minute.ts'
+import { landRawFile } from '../server/raw-zone.ts'
 import { A, seedFacts } from './fixtures.ts'
-import { metricsCatalog } from '../core/metrics-catalog.ts'
+import {
+  metricsCatalog,
+  sessionMetricsCatalog,
+} from '../core/metrics-catalog.ts'
 
 const CN = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 
@@ -18,10 +24,44 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
   // Seed with a writer, then release it — the API opens read-only. One extra
   // instrument uses a REAL macro-minted id so the API is exercised with
   // production id shapes, not just handcrafted fixture uuids.
-  const writer = await openDatabase({ dbPath })
+  const writer = await openDatabase({ dbPath, dataDir: dir })
+  const encoder = new TextEncoder()
+  const landMinutes = async (date: string, rows: string[][]) =>
+    landRawFile({
+      connection: writer.connection,
+      dataDir: dir,
+      sourceId: 'polygon',
+      dataset: 'minute_aggs',
+      requestUrl: `https://files.massive.com/flatfiles/${date}`,
+      marketScope: 'us_stocks',
+      marketDate: date,
+      httpStatus: 200,
+      relativeFilePath: `raw/polygon/minute_aggs/date=${date}/us_stocks.csv.gz`,
+      payload: new Uint8Array(
+        gzipSync(
+          encoder.encode(
+            [
+              'ticker,volume,open,close,high,low,window_start,transactions',
+              ...rows.map((row) => row.join(',')),
+            ].join('\n'),
+          ),
+        ),
+      ),
+      storeVerbatim: true,
+    })
   const mintedId = await (async () => {
     try {
       await seedFacts(writer)
+      // Two sessions of AAA minutes so view-at-minute serves real data.
+      // 2025-01-02T14:30:00Z = 09:30 ET.
+      await landMinutes('2025-01-02', [
+        ['AAA', '1000', '100', '100', '100.5', '99.5', '1735828200000000000', '10'],
+        ['AAA', '500', '100', '101', '101', '100', '1735828260000000000', '5'],
+      ])
+      await landMinutes('2025-01-03', [
+        ['AAA', '2000', '51', '51', '51.5', '50.5', '1735914600000000000', '20'],
+      ])
+      await buildMinuteParquet(writer.connection, { dataDir: dir })
       await writer.connection.run(`
         insert into facts.exchanges (
           exchange_mic, name, market_scope, calendar_id, timezone, currency
@@ -229,18 +269,65 @@ test('api serves health, scopes, search, detail, and policy bars', async () => {
       /previous: 2025-01-03, next: 2025-01-06/,
     )
 
-    // Intraday endpoints: empty coverage answers cleanly (no minute data in
-    // this fixture); bad dates are rejected.
+    // The intraday view at minute T: exact session catalog, the daily view
+    // as of the previous close, and labeled hindsight horizons.
+    const minuteView = (await (
+      await fetch(
+        `${base}/api/instruments/${A}/view-at-minute?date=2025-01-03&minute=09:31&forward=1`,
+      )
+    ).json()) as {
+      t: { date: string; minute: string }
+      visible_bars: number
+      metrics: Array<{ id: string }>
+      daily: { t: string; metrics: Array<{ id: string }> } | null
+      forward: { hindsight: boolean; rows: Array<{ horizon: string }> }
+    }
+    assert.deepEqual(minuteView.t, { date: '2025-01-03', minute: '09:31' })
+    assert.equal(minuteView.visible_bars, 1)
+    assert.deepEqual(
+      minuteView.metrics.map(({ id }) => id),
+      sessionMetricsCatalog.map(({ id }) => id),
+    )
+    assert.equal(minuteView.daily?.t, '2025-01-02')
+    assert.deepEqual(
+      minuteView.daily?.metrics.map(({ id }) => id),
+      metricsCatalog.map(({ id }) => id),
+    )
+    assert.equal(minuteView.forward.hindsight, true)
+    assert.deepEqual(
+      minuteView.forward.rows.map(({ horizon }) => horizon),
+      ['to_close', 'next_open', '1d', '5d'],
+    )
+
+    const noMinutes = await fetch(
+      `${base}/api/instruments/${A}/view-at-minute?date=2025-01-06&minute=10:00`,
+    )
+    assert.equal(noMinutes.status, 404)
+    assert.match(
+      String(((await noMinutes.json()) as { error: string }).error),
+      /previous: 2025-01-03/,
+    )
+
+    // Intraday endpoints serve the fixture's two minute sessions; bad dates
+    // are rejected.
     const minuteDays = (await (
       await fetch(`${base}/api/instruments/${A}/minute-days`)
-    ).json()) as { days: unknown[] }
-    assert.deepEqual(minuteDays.days, [])
+    ).json()) as { days: Array<{ date: string; bars: string }> }
+    assert.deepEqual(
+      minuteDays.days.map(({ date, bars }) => ({ date, bars })),
+      [
+        { date: '2025-01-03', bars: '1' },
+        { date: '2025-01-02', bars: '2' },
+      ],
+    )
     const minuteBars = (await (
       await fetch(
         `${base}/api/instruments/${A}/minute-bars?date=2025-01-02&policy=split`,
       )
-    ).json()) as { bars: unknown[]; date: string }
-    assert.deepEqual(minuteBars.bars, [])
+    ).json()) as { bars: Array<{ close: number }>; date: string }
+    assert.equal(minuteBars.bars.length, 2)
+    // Split policy halves the pre-split session's prices.
+    assert.equal(minuteBars.bars[0]?.close, 50)
     assert.equal(minuteBars.date, '2025-01-02')
     assert.equal(
       (await fetch(`${base}/api/instruments/${A}/minute-bars?date=nope`))

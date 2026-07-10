@@ -1,6 +1,7 @@
 # View at T — plan (v1.1, 2026-07-10, executable spec)
 
-Status: IMPLEMENTED through VT-P4 on 2026-07-10; VT-P5 remains later work.
+Status: IMPLEMENTED through VT-P5 on 2026-07-10 (VT-P5 owner-implemented
+same day; see the dated notes).
 This approved direction was written to be executed without further design
 decisions. Supersedes v1 (same day):
 market context is reframed as **residualization** — separating a stock's
@@ -259,8 +260,9 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   decision.
 - No schema changes at all: v1 touches no `db/schema.sql` table; it is
   TypeScript + SQL over existing facts/computed objects.
-- Intraday-T metrics: phase VT-P5, after daily proves the shape (only ~4
-  days of minute history exist; algorithms would be truthful but thin).
+- (resolved same day) Intraday-T metrics shipped as VT-P5 — see the dated
+  implementation notes; pace metrics honestly report insufficient history
+  until more minute days accumulate.
 
 ## Milestones (PR-sized, in order)
 
@@ -286,8 +288,22 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   demo documented for AAPL (a 2025 date, values independently recomputed)
   and 600519 (a suspension-window CN name for `suspended_days_63d` if
   present in the sample).
-- **VT-P5 (later, not now)** — intraday-T subset (`vwap_dist`,
-  `session_range_pos`, `session_rvol_pace`, `minutes_since_open`).
+- **VT-P5 — intraday view at minute T** (implemented 2026-07-10). T is
+  (date, ET minute); visible bars are the session's RTH minute bars strictly
+  before T (the in-progress minute is invisible). A 17-metric `session`
+  catalog (`core/metrics-catalog.ts: sessionMetricsCatalog`, same
+  null-with-reason discipline) computes from one pass in
+  `server/metrics-at-minute.ts`; the FULL daily catalog rides along as of the
+  previous close (knowable at any intraday T). `gap_at_open` uses the
+  adjusted previous close, so an ex-date session gaps economically.
+  `server/forward-returns-minute.ts` scores a next-minute-open entry over
+  `to_close`/`next_open`/`1d`/`5d` with the same anchor-invariant math and
+  flags. Surfaces: `GET /api/instruments/:id/view-at-minute`, and on the
+  intraday chart a click sets T just AFTER the clicked bar (that bar is the
+  last visible one); the panel shows session metrics, a collapsible daily
+  view, and the separated hindsight block. Session windows are declared per
+  scope (`us_stocks` 09:30–16:00 incl. the auction minute); scopes without
+  minute data error explicitly.
 
 ## Acceptance contract (all objectively testable)
 
@@ -342,6 +358,25 @@ so v1 makes the model explicit and small rather than pretending neutrality:
   hidden.
 
 ## Implementation notes
+
+- 2026-07-10, post-review hardening (owner-implemented): forward horizons
+  past the known calendar return per-row `beyond_calendar` results instead
+  of failing the whole call — near horizons at a recent T still resolve.
+  `delisted` now comes from IDENTITY (`facts.instruments.delisted_date <=
+  horizon`), never inferred from missing bars; every other carried valuation
+  (suspension, or a horizon past the last known bar of a live instrument) is
+  `stale`. Event metrics whose null means "no such event knowable at T"
+  (`days_since_split`, `days_since_dividend`, `declared_ex_days`) report a
+  dedicated `no_known_event` reason instead of `undefined_input`.
+- 2026-07-10, VT-P5 (owner-implemented): session catalog and engine, minute
+  forward returns, API and Instruments-page minute panel as specified in the
+  amended milestone above. Conventions fixed here: chart click = T just
+  after the clicked bar; `rvol_pace` needs ≥5 prior sessions with bars
+  before the same cutoff (up to 20 used); `minutes_since_open` counts
+  observed complete RTH bars (halts make it less than wall-clock minutes);
+  minute volatility annualizes by √(390×252); the entry bar for minute
+  forwards is the first RTH bar at/after T, and MAE/MFE for `1d`/`5d` mixes
+  the remaining session's minute path with the daily bars after D.
 
 - 2026-07-10, VT-P1 interpretation: horizon dates are scope-calendar open
   dates counted strictly after T. `next_open` enters on the first instrument

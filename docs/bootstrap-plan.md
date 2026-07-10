@@ -305,5 +305,12 @@ shape, and all catalog formulas are fixture-tested. Live AAPL and 600519
 evidence is recorded in the plan's dated implementation notes and available
 through `npm run verify:view-at` with the development server stopped.
 
-VT-P5 intraday-at-T remains later work. Expansion beyond the 42-code CN
-prototype and a production CN vendor decision remain separate commitments.
+VT-P5 intraday-at-T shipped 2026-07-10: pick a minute on the intraday chart
+(T lands just after the clicked bar) and see 17 session metrics from the
+complete RTH bars before T, the full daily catalog as of the previous close,
+and hindsight from a next-minute-open entry over to_close/next_open/1d/5d.
+The same hardening pass made forward horizons degrade per-row
+(`beyond_calendar`) instead of failing wholesale and moved the `delisted`
+flag onto identity (`delisted_date`), with every other carried valuation
+reported `stale`. Expansion beyond the 42-code CN prototype and a production
+CN vendor decision remain separate commitments.

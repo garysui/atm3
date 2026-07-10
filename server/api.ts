@@ -20,7 +20,12 @@ import {
 import { createReadPool, type ReadPool } from './read-pool.ts'
 import { abortStaleRuns } from './runs.ts'
 import { metricsAt } from './metrics-at.ts'
+import {
+  sessionMetricsAt,
+  ViewAtMinuteDateError,
+} from './metrics-at-minute.ts'
 import { forwardReturns, ViewAtTDateError } from './forward-returns.ts'
+import { forwardReturnsFromMinute } from './forward-returns-minute.ts'
 
 // JSON API over facts + computed, and the owner of the database write lock:
 // UI queries run on a pool of reader connections while pipeline operations
@@ -68,6 +73,12 @@ const viewAtQuerySchema = z.object({
   t: z.iso.date(),
   forward: z.enum(['0', '1']).default('0'),
   entry: z.enum(['next_open', 't_close']).default('next_open'),
+})
+
+const viewAtMinuteQuerySchema = z.object({
+  date: z.iso.date(),
+  minute: z.string().regex(/^\d{2}:\d{2}$/),
+  forward: z.enum(['0', '1']).default('0'),
 })
 
 const limitQuerySchema = z.object({
@@ -340,6 +351,62 @@ export async function createApiServer(
     response.json(report)
   })
 
+  // The intraday view at minute T: session metrics from complete RTH bars
+  // strictly before T, the full daily view as of the previous close, and
+  // opt-in hindsight rows from a minute entry.
+  app.get('/api/instruments/:id/view-at-minute', async (request, response) => {
+    const instrumentId = instrumentIdSchema.parse(request.params.id)
+    const query = viewAtMinuteQuerySchema.parse(request.query)
+    const report = await pool.run(async (connection) => {
+      const scopeResult = await connection.runAndReadAll(
+        `select primary_market_scope as market_scope
+         from facts.instruments
+         where instrument_id = cast($instrument_id as uuid)`,
+        { instrument_id: instrumentId },
+      )
+      const scope = scopeResult.getRowObjectsJson()[0]?.market_scope
+      if (scope === undefined) return null
+      const marketScope = String(scope)
+
+      const session = await sessionMetricsAt(connection, {
+        instrumentId,
+        marketScope,
+        date: query.date,
+        minute: query.minute,
+      })
+      // The daily catalog is fully knowable at any intraday T as of the
+      // previous close — that date comes from the session view itself.
+      const daily = session.prev_close_date === null
+        ? null
+        : await metricsAt(connection, {
+            instrumentId,
+            marketScope,
+            t: session.prev_close_date,
+          })
+      const forward = query.forward === '1'
+        ? await forwardReturnsFromMinute(connection, {
+            instrumentId,
+            marketScope,
+            date: query.date,
+            minute: query.minute,
+          })
+        : null
+      return {
+        ...session,
+        daily,
+        ...(forward
+          ? { forward: { hindsight: true, entry_basis: 'next_minute_open', rows: forward } }
+          : {}),
+      }
+    })
+
+    if (report === null) {
+      response.status(404).json({ error: 'instrument not found' })
+      return
+    }
+    response.json(report)
+  })
+
   // Intraday coverage for one instrument: one summary row per day with
   // minute data (recent first).
   app.get('/api/instruments/:id/minute-days', async (request, response) => {
@@ -547,6 +614,15 @@ export async function createApiServer(
       }
 
       if (error instanceof ViewAtTDateError) {
+        response.status(404).json({
+          error: error.message,
+          previous_date: error.previousDate,
+          next_date: error.nextDate,
+        })
+        return
+      }
+
+      if (error instanceof ViewAtMinuteDateError) {
         response.status(404).json({
           error: error.message,
           previous_date: error.previousDate,

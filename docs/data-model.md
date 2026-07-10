@@ -521,6 +521,15 @@ suspensions, and terminal tape ends remain explicit through reason, stale,
 and delisted fields. This future data never enters backward metrics or
 baseline selection.
 
+The same contract extends intraday:
+`GET /api/instruments/:id/view-at-minute?date=D&minute=HH:MM` treats T as an
+exchange-local minute — session metrics come from the RTH minute bars
+STRICTLY before T (the in-progress minute is invisible), the daily catalog is
+served as of the previous close (fully knowable at any intraday T), and
+opt-in hindsight scores a next-minute-open entry to the close, the next
+open, and one/five open days out with the same anchor-invariant adjusted
+math and delisted/stale/beyond_calendar honesty.
+
 `npm run verify:view-at` checks AAPL and 600519 against the catalog and prints
 a compact live sample. Stop the development server first because the script
 opens DuckDB read-only. Fixture tests enforce the stronger law: landing raw

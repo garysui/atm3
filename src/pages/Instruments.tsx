@@ -5,6 +5,7 @@ import {
   type InstrumentDetail,
   type MinuteBarsResponse,
   type Row,
+  type ViewAtMinuteResponse,
   type ViewAtResponse,
 } from '../api.ts'
 import {
@@ -14,8 +15,25 @@ import {
 } from '../components/StockChart.tsx'
 import { DataTable } from '../components/DataTable.tsx'
 import { ViewAtPanel } from '../components/ViewAtPanel.tsx'
+import { ViewAtMinutePanel } from '../components/ViewAtMinutePanel.tsx'
 
 const policies = ['none', 'split', 'split_dividend'] as const
+
+// Clicking a minute bar places T just AFTER that bar completes: the bar the
+// user clicked is the last visible one, matching "stand at 10:31 having seen
+// the 10:30 minute".
+const etDateOfEpoch = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+const etMinuteOfEpoch = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/New_York',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
 
 export function Instruments({
   scope,
@@ -45,6 +63,21 @@ export function Instruments({
     data: ViewAtResponse
   } | null>(null)
   const [viewAtError, setViewAtError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
+  const [minuteViewAt, setMinuteViewAt] = useState<{
+    id: string
+    date: string
+    minute: string
+    markerTime: number | null
+  } | null>(null)
+  const [includeMinuteForward, setIncludeMinuteForward] = useState(false)
+  const [minuteViewAtState, setMinuteViewAtState] = useState<{
+    key: string
+    data: ViewAtMinuteResponse
+  } | null>(null)
+  const [minuteViewAtError, setMinuteViewAtError] = useState<{
     key: string
     message: string
   } | null>(null)
@@ -84,6 +117,17 @@ export function Instruments({
   const viewAtKey = instrumentId && viewAtDate
     ? `${instrumentId}|${viewAtDate}|${includeForward}|${entryBasis}`
     : null
+  // The minute-T selection is tied to the charted session day.
+  const minuteT =
+    minuteViewAt &&
+    minuteViewAt.id === instrumentId &&
+    minuteViewAt.date === minuteDay
+      ? minuteViewAt
+      : null
+  const minuteViewAtKey =
+    instrumentId && minuteDay && minuteT
+      ? `${instrumentId}|${minuteDay}|${minuteT.minute}|${includeMinuteForward}`
+      : null
 
   const search = async (event?: { preventDefault(): void }) => {
     event?.preventDefault()
@@ -229,6 +273,38 @@ export function Instruments({
     viewAtKey,
     includeForward,
     entryBasis,
+  ])
+
+  useEffect(() => {
+    if (!instrumentId || !minuteDay || !minuteT || !minuteViewAtKey) return
+
+    let cancelled = false
+    const forward = includeMinuteForward ? '&forward=1' : ''
+    getJson<ViewAtMinuteResponse>(
+      `/api/instruments/${instrumentId}/view-at-minute?date=${minuteDay}` +
+        `&minute=${encodeURIComponent(minuteT.minute)}${forward}`,
+    )
+      .then((data) => {
+        if (!cancelled) {
+          setMinuteViewAtState({ key: minuteViewAtKey, data })
+          setMinuteViewAtError(null)
+        }
+      })
+      .catch((cause: Error) => {
+        if (!cancelled) {
+          setMinuteViewAtError({ key: minuteViewAtKey, message: cause.message })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    instrumentId,
+    minuteDay,
+    minuteT,
+    minuteViewAtKey,
+    includeMinuteForward,
   ])
 
   const detail =
@@ -498,6 +574,48 @@ export function Instruments({
                     bars={minuteChartBars}
                     events={[]}
                     resetKey={`${instrumentId}|${minuteDay}|${asOf}`}
+                    selectedTime={minuteT?.markerTime ?? null}
+                    onMinuteSelect={(time) =>
+                      setMinuteViewAt({
+                        id: String(instrument.instrument_id),
+                        date: etDateOfEpoch.format(new Date(time * 1000)),
+                        minute: etMinuteOfEpoch.format(
+                          new Date((time + 60) * 1000),
+                        ),
+                        markerTime: time,
+                      })
+                    }
+                  />
+                  <ViewAtMinutePanel
+                    date={minuteDay}
+                    minute={minuteT?.minute ?? ''}
+                    report={
+                      minuteViewAtKey &&
+                      minuteViewAtState?.key === minuteViewAtKey
+                        ? minuteViewAtState.data
+                        : null
+                    }
+                    loading={Boolean(
+                      minuteViewAtKey &&
+                      minuteViewAtState?.key !== minuteViewAtKey &&
+                      minuteViewAtError?.key !== minuteViewAtKey,
+                    )}
+                    error={
+                      minuteViewAtKey &&
+                      minuteViewAtError?.key === minuteViewAtKey
+                        ? minuteViewAtError.message
+                        : null
+                    }
+                    includeForward={includeMinuteForward}
+                    onMinuteChange={(minute) =>
+                      setMinuteViewAt({
+                        id: String(instrument.instrument_id),
+                        date: minuteDay,
+                        minute,
+                        markerTime: null,
+                      })
+                    }
+                    onForwardChange={setIncludeMinuteForward}
                   />
                 </div>
               )}

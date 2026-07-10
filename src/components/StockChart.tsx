@@ -272,21 +272,28 @@ export function StockChart({
   events,
   resetKey,
   selectedDate = null,
+  selectedTime = null,
   onDateSelect,
+  onMinuteSelect,
 }: {
   mode: 'daily' | 'intraday'
   bars: ChartBar[]
   events: ChartEvent[]
   resetKey: string
   selectedDate?: string | null
+  // Intraday T marker: epoch seconds of the selected minute bar.
+  selectedTime?: number | null
   onDateSelect?(date: string): void
+  onMinuteSelect?(time: number): void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ChartHandle | null>(null)
   const shownRef = useRef<ChartBar[]>([])
   const volumeCapRef = useRef(0)
   const selectedDateRef = useRef<string | null>(selectedDate)
+  const selectedTimeRef = useRef<number | null>(selectedTime)
   const onDateSelectRef = useRef(onDateSelect)
+  const onMinuteSelectRef = useRef(onMinuteSelect)
   const updateTMarkerRef = useRef<() => void>(() => undefined)
   const [legend, setLegend] = useState('')
   const [rthOnly, setRthOnly] = useState(true)
@@ -297,6 +304,10 @@ export function StockChart({
   useEffect(() => {
     onDateSelectRef.current = onDateSelect
   }, [onDateSelect])
+
+  useEffect(() => {
+    onMinuteSelectRef.current = onMinuteSelect
+  }, [onMinuteSelect])
 
   // Regular trading hours: 09:30 through the 16:00 auction minute inclusive
   // (the official close prints there).
@@ -391,18 +402,25 @@ export function StockChart({
     }
 
     const updateTMarker = () => {
-      const date = selectedDateRef.current
-      const coordinate = date
-        ? chart.timeScale().timeToCoordinate(date as Time)
-        : null
+      const key =
+        mode === 'daily' ? selectedDateRef.current : selectedTimeRef.current
+      const coordinate =
+        key === null || key === ''
+          ? null
+          : chart.timeScale().timeToCoordinate(key as Time)
       setTMarkerX(coordinate === null ? null : coordinate)
     }
     updateTMarkerRef.current = updateTMarker
     const onVisibleRange = () => updateTMarker()
     const onClick = (param: MouseEventParams<Time>) => {
-      if (mode !== 'daily') return
-      const date = dailyTimeString(param.time)
-      if (date) onDateSelectRef.current?.(date)
+      if (mode === 'daily') {
+        const date = dailyTimeString(param.time)
+        if (date) onDateSelectRef.current?.(date)
+        return
+      }
+      if (typeof param.time === 'number') {
+        onMinuteSelectRef.current?.(param.time)
+      }
     }
 
     chart.subscribeCrosshairMove(onCrosshair)
@@ -500,6 +518,7 @@ export function StockChart({
       handle.fittedFor = fitKey
     }
     selectedDateRef.current = selectedDate
+    selectedTimeRef.current = selectedTime
     requestAnimationFrame(() => updateTMarkerRef.current())
   }, [
     shown,
@@ -510,6 +529,7 @@ export function StockChart({
     showVwap,
     rthOnly,
     selectedDate,
+    selectedTime,
   ])
 
   const setRange = (months: number | null) => {

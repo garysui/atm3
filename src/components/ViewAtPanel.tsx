@@ -1,20 +1,112 @@
 import type { ViewAtResponse } from '../api.ts'
+import { formatPercent, formatValue } from './metric-format.ts'
 
-function formatValue(value: number | string | boolean | null): string {
-  if (value === null) return '-'
-  if (typeof value === 'boolean') return value ? 'true' : 'false'
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return '-'
-    if (value === 0) return '0'
-    return Math.abs(value) >= 1000 || Math.abs(value) < 0.0001
-      ? value.toExponential(5)
-      : value.toPrecision(7)
+// One table per metric family — shared by the daily and the minute panels.
+export function MetricFamilyTables({
+  metrics,
+}: {
+  metrics: ViewAtResponse['metrics']
+}) {
+  const families = new Map<string, ViewAtResponse['metrics']>()
+  for (const metric of metrics) {
+    const rows = families.get(metric.family) ?? []
+    rows.push(metric)
+    families.set(metric.family, rows)
   }
-  return value
+
+  return (
+    <div className="view-at-metrics">
+      {[...families].map(([family, rows]) => (
+        <section key={family} className="metric-family">
+          <h3>{family}</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>metric</th>
+                <th>value</th>
+                <th>bars</th>
+                <th>unit</th>
+                <th>reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((metric) => (
+                <tr key={metric.id}>
+                  <td>{metric.id}</td>
+                  <td className="num">{formatValue(metric.value)}</td>
+                  <td className="num">{metric.bars_available}</td>
+                  <td>{metric.unit}</td>
+                  <td>{metric.reason?.replaceAll('_', ' ') ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ))}
+    </div>
+  )
 }
 
-function formatPercent(value: number | null): string {
-  return value === null ? '-' : `${(value * 100).toFixed(3)}%`
+export function HindsightTable({
+  horizonLabel,
+  forward,
+}: {
+  horizonLabel: string
+  forward: {
+    entry_basis: string
+    rows: Array<{
+      horizon: number | string
+      date: string | null
+      ret: number | null
+      mae: number | null
+      mfe: number | null
+      delisted: boolean
+      stale: boolean
+      bars_used: number
+      reason?: string
+    }>
+  }
+}) {
+  return (
+    <section className="view-at-forward">
+      <h3>What happened next - hindsight</h3>
+      <p className="muted">entry: {forward.entry_basis.replaceAll('_', ' ')}</p>
+      <table>
+        <thead>
+          <tr>
+            <th>{horizonLabel}</th>
+            <th>date</th>
+            <th>return</th>
+            <th>MAE</th>
+            <th>MFE</th>
+            <th>bars</th>
+            <th>flags</th>
+          </tr>
+        </thead>
+        <tbody>
+          {forward.rows.map((row) => (
+            <tr key={row.horizon}>
+              <td className="num">
+                {String(row.horizon).replaceAll('_', ' ')}
+              </td>
+              <td>{row.date ?? '-'}</td>
+              <td className="num">{formatPercent(row.ret)}</td>
+              <td className="num">{formatPercent(row.mae)}</td>
+              <td className="num">{formatPercent(row.mfe)}</td>
+              <td className="num">{row.bars_used}</td>
+              <td>
+                {[
+                  row.delisted && 'delisted',
+                  row.stale && 'stale',
+                  row.reason?.replaceAll('_', ' '),
+                ].filter(Boolean).join(', ')}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
 }
 
 export function ViewAtPanel({
@@ -40,13 +132,6 @@ export function ViewAtPanel({
   onForwardChange(enabled: boolean): void
   onEntryBasisChange(entry: 'next_open' | 't_close'): void
 }) {
-  const families = new Map<string, ViewAtResponse['metrics']>()
-  for (const metric of report?.metrics ?? []) {
-    const rows = families.get(metric.family) ?? []
-    rows.push(metric)
-    families.set(metric.family, rows)
-  }
-
   return (
     <section className="view-at">
       <h3>View at T</h3>
@@ -100,75 +185,9 @@ export function ViewAtPanel({
       {loading && <p className="muted">loading view…</p>}
       {error && <p className="error">{error}</p>}
 
-      {report && (
-        <div className="view-at-metrics">
-          {[...families].map(([family, metrics]) => (
-            <section key={family} className="metric-family">
-              <h3>{family}</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>metric</th>
-                    <th>value</th>
-                    <th>bars</th>
-                    <th>unit</th>
-                    <th>reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.map((metric) => (
-                    <tr key={metric.id}>
-                      <td>{metric.id}</td>
-                      <td className="num">{formatValue(metric.value)}</td>
-                      <td className="num">{metric.bars_available}</td>
-                      <td>{metric.unit}</td>
-                      <td>{metric.reason?.replaceAll('_', ' ') ?? ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          ))}
-        </div>
-      )}
-
+      {report && <MetricFamilyTables metrics={report.metrics} />}
       {report?.forward && (
-        <section className="view-at-forward">
-          <h3>What happened next - hindsight</h3>
-          <p className="muted">entry: {report.forward.entry_basis}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>open days</th>
-                <th>date</th>
-                <th>return</th>
-                <th>MAE</th>
-                <th>MFE</th>
-                <th>bars</th>
-                <th>flags</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.forward.rows.map((row) => (
-                <tr key={row.horizon}>
-                  <td className="num">{row.horizon}</td>
-                  <td>{row.date}</td>
-                  <td className="num">{formatPercent(row.ret)}</td>
-                  <td className="num">{formatPercent(row.mae)}</td>
-                  <td className="num">{formatPercent(row.mfe)}</td>
-                  <td className="num">{row.bars_used}</td>
-                  <td>
-                    {[
-                      row.delisted && 'delisted',
-                      row.stale && 'stale',
-                      row.reason?.replaceAll('_', ' '),
-                    ].filter(Boolean).join(', ')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+        <HindsightTable horizonLabel="open days" forward={report.forward} />
       )}
     </section>
   )
